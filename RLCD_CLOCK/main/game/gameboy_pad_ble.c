@@ -368,19 +368,43 @@ static bool    s_hat_null15_seen;
 //
 // 所以改成**看实测值**：连上之后 hat 一直没变的那个值就是静止中位，用它当锚点
 // 反推编码族，描述符只作为次要依据。
-// 用**众数**当锚点：hat 字段最多 4~8 位，取值上限 16 个，直方图成本可以忽略。
-// 松手状态在正常使用里出现次数碾压任何单个方向，所以众数就是静止中位。
-// ⚠ 别用"某个值持续 N 秒不变就当作中位"那种判定：长按方向键超过 N 秒会把方向
-//   值锚成中位，松手后反而变成"永久按着这个方向"，比不校准更糟。
+//
+// ⚠ 这里踩过一次大坑，判据改过两版，结论写在这里免得以后又改回去：
+//
+//   第一版「众数 = 静止中位」是**错的**。Q36 这类手柄只在状态变化时才发报文
+//   （实测静置 150 秒一包都不发），于是直方图数的是**事件**而不是时间。玩横版
+//   游戏时"按住右键 + 连点 A"每点一下都会带一包 hat 仍是右的报文，右键那个桶
+//   飞快涨，而中位那个桶一动不动；领先 8 票就换锚点，几秒钟就把锚点换成"右"。
+//   锚点一换，按住右键变成居中、松开右键变成"上"（(0-lmin)&7==0）—— 表现就是
+//   "玩一会按钮就错乱"，而且重启才好，因为锚点只在内存里。
+//
+//   第二版（也是现在的做法）换成**转移图**：只有当 hat 的值真的从一个变成另一个
+//   时才在两者之间连一条边。中心是所有方向的枢纽，度数必然最高；而"长按不动"
+//   和"按住的同时连点 A"都不产生新边，污染不了它。
+//
+//   再叠一条硬约束：锚点在校准窗口结束后**永久冻结**。运行期任何"我好像更常
+//   见到这个值"的自适应都是同一个陷阱的变体 —— 用户玩什么、玩多久不该影响
+//   设备本身的编码约定。
 #define PAD_HAT_HIST_MAX 16
-static uint16_t s_hat_hist[PAD_HAT_HIST_MAX];
+static uint16_t s_hat_hist[PAD_HAT_HIST_MAX];    // 见过哪些值、各见过几次
+static uint16_t s_hat_degree[PAD_HAT_HIST_MAX];  // 转移邻接位图：bit v = 与 v 直接相邻过
 static bool     s_hat_have_anchor;   // 已经拿到过第一个 hat 样本
-static uint32_t s_hat_anchor_raw;    // 当前的"静止中位"原始值（众数）
+static uint32_t s_hat_anchor_raw;    // "静止中位"原始值
 static bool     s_hat_anchor_logged; // 锚点日志限流，避免每帧刷屏
+static uint32_t s_hat_prev_raw;      // 上一包的 hat 值，用于连边
+static bool     s_hat_prev_valid;
+static uint32_t s_hat_transitions;   // 已经发生多少次 hat 变化
+static uint32_t s_hat_first_ms;      // 第一个样本的时刻
+static bool     s_hat_frozen;        // 校准窗口已过，锚点不再改动
 
-// 换锚点需要的领先幅度。要求是**显著**多数，不是刚好多一票 —— 否则在
-// "按住方向"和"松开"之间来回时锚点会被反复改写，方向键会自己抖。
-#define PAD_HAT_ANCHOR_MARGIN 8
+// 校准窗口：凑够这么多条转移边就锁死锚点。8 条边在选 ROM 那几下上下键里就能
+// 凑齐，用户基本察觉不到校准过程。
+#define PAD_HAT_CALIB_TRANSITIONS 8
+// 兜底：万一用户连上就按住某个方向不放（hat 一直不变，转移边永远是 0），
+// 到点也得锁。但**至少要有 3 条边**才允许走时间兜底 —— 一条边都没有就锁，
+// 锁住的其实是"连上时手指正按着的那个方向"，那比不锁还糟。
+#define PAD_HAT_CALIB_MIN_TRANS  3
+#define PAD_HAT_CALIB_WINDOW_MS  4000
 
 // 见过多少个不同的 hat 取值。真正的 hat 最多只有 9 个（8 个方向 + 1 个居中），
 // 见到的不同值超过 9 个就说明这一位**根本不是 hat** —— 多半是报表挑错/
@@ -389,6 +413,82 @@ static bool     s_hat_anchor_logged; // 锚点日志限流，避免每帧刷屏
 #define PAD_HAT_MAX_DISTINCT 9
 static uint8_t s_hat_distinct;
 static bool    s_hat_distinct_logged;
+
+// ---- hat 锚点选取 ----
+
+// 值是否落在描述符声明的逻辑区间内。区间外的值按 HID 规范就是 null（居中）。
+static bool hat_value_in_range(uint32_t v, int32_t lmin, int32_t lmax)
+{
+    if (lmax < lmin) {
+        return false;               // 描述符本身异常，别拿它当判据
+    }
+    const int64_t iv = (int64_t)v;
+    return iv >= (int64_t)lmin && iv <= (int64_t)lmax;
+}
+
+// 在见过的值里挑锚点。判据依次是：
+//
+//   1) 转移度数高的优先。中心是所有方向的枢纽，度数必然最高；单个方向只和
+//      中心相邻，度数为 1。
+//   2) 度数并列时，**出现次数少的**优先。中位是"每按一次方向就路过一次"的
+//      枢纽，而长按方向不动会猛涨那个方向的计数（按住的同时连点 A 也一样，
+//      每点一下都带一包 hat 同值的报文），所以计数少的一侧才是中位。
+//   3) 还是并列时，区间外的值优先 —— 按规范它就是 null，也就是居中（族 B 的
+//      8 / 15）。
+//   4) 最后取最小的 —— 族 A 的"0 = 居中"是最常见的约定。
+//
+// 这三条裁决覆盖了两种族在"用户只按过一两个方向"这种最坏情况下的判定：
+//   族 A 只按了右：候选 {0(中), 3(右)}，度数并列 → 计数少的是 0 → 对；
+//   族 B 只按了上：候选 {8(中), 0(上)}，度数并列 → 计数少的是 8 → 对。
+//
+// ⚠ 这个函数的返回值只取决于 hist / degree 的当前内容，是**确定性**的，所以
+//   调用方可以在校准窗口内每次都无条件采纳它，不会来回抖（数据只会单调增长）。
+// 返回 -1 表示还没有任何样本。
+static int hat_pick_anchor(int32_t lmin, int32_t lmax)
+{
+    int      best = -1;
+    unsigned best_deg = 0;
+    uint16_t best_cnt = 0;
+    for (uint16_t v = 0; v < PAD_HAT_HIST_MAX; ++v) {
+        if (s_hat_hist[v] == 0u) {
+            continue;
+        }
+        const unsigned deg =
+            (unsigned)__builtin_popcount((unsigned)s_hat_degree[v]);
+        const uint16_t cnt = s_hat_hist[v];
+        if (best < 0) {
+            best = (int)v;
+            best_deg = deg;
+            best_cnt = cnt;
+            continue;
+        }
+        if (deg != best_deg) {
+            if (deg > best_deg) {
+                best = (int)v;
+                best_deg = deg;
+                best_cnt = cnt;
+            }
+            continue;
+        }
+        if (cnt != best_cnt) {
+            if (cnt < best_cnt) {
+                best = (int)v;
+                best_cnt = cnt;
+            }
+            continue;
+        }
+        const bool best_in = hat_value_in_range((uint32_t)best, lmin, lmax);
+        const bool cand_in = hat_value_in_range((uint32_t)v, lmin, lmax);
+        if (best_in && !cand_in) {
+            best = (int)v;           // 区间外的更像 null
+            best_cnt = cnt;
+        } else if (best_in == cand_in && (uint32_t)v < (uint32_t)best) {
+            best = (int)v;
+            best_cnt = cnt;
+        }
+    }
+    return best;
+}
 
 // 方向键：同时兼容两族 hat 约定
 //   族 A：0 = 居中，1..8 顺时针
@@ -731,7 +831,12 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
         hat_found = true;
         const uint32_t raw = hid_extract_bits(body, body_len, f->bit_offset,
                                               f->bit_size);
-        // ---- 校准锚点：出现次数最多的那个值 = 静止中位 ----
+        // ---- 校准锚点 ----
+        //
+        // 只数"值发生了变化"的转移边，不数报文条数。中心是所有方向的枢纽，
+        // 度数必然最高；长按不动、以及按住方向的同时连点 A 都不产生新边，
+        // 因此这两种最常见的玩法都污染不了结果（老版数报文条数，就是被
+        // "按住右键连点 A"骗过去的）。
         if (raw < PAD_HAT_HIST_MAX) {
             if (s_hat_hist[raw] == 0u) {
                 ++s_hat_distinct;
@@ -739,16 +844,56 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
             if (s_hat_hist[raw] < 0xFFFFu) {
                 ++s_hat_hist[raw];
             }
+
+            if (s_hat_prev_valid && s_hat_prev_raw != raw &&
+                s_hat_prev_raw < PAD_HAT_HIST_MAX) {
+                s_hat_degree[s_hat_prev_raw] |= (uint16_t)(1u << raw);
+                s_hat_degree[raw] |= (uint16_t)(1u << s_hat_prev_raw);
+                ++s_hat_transitions;
+            }
+            s_hat_prev_raw = raw;
+            s_hat_prev_valid = true;
+
             if (!s_hat_have_anchor) {
                 s_hat_have_anchor = true;
                 s_hat_anchor_raw = raw;      // 首样本先顶上，别让首帧无锚点
-            } else if (s_hat_hist[raw] >=
-                       (uint16_t)(s_hat_hist[s_hat_anchor_raw] +
-                                  PAD_HAT_ANCHOR_MARGIN)) {
-                s_hat_anchor_raw = raw;      // 显著多数才改锚点
-                ESP_LOGI(PAD_TAG, "hat anchor moved to %u (count=%u)",
-                         (unsigned)raw, (unsigned)s_hat_hist[raw]);
+                s_hat_first_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            } else if (!s_hat_frozen) {
+                // 校准窗口内：每次都按当前证据重挑。hat_pick_anchor() 是确定性
+                // 的，数据又只增不减，所以不会来回抖；而"度数必须严格更高才换"
+                // 那种写法会把上面 2/3/4 三条并列裁决全挡掉 —— 用户只按过一个
+                // 方向时恰好就是并列，锚点会一直锁在错的那个上。
+                const int cand = hat_pick_anchor(f->logical_min,
+                                                 f->logical_max);
+                if (cand >= 0 && (uint32_t)cand != s_hat_anchor_raw) {
+                    ESP_LOGI(PAD_TAG,
+                             "hat anchor %u -> %u (deg %u cnt %u)",
+                             (unsigned)s_hat_anchor_raw, (unsigned)cand,
+                             (unsigned)__builtin_popcount(
+                                 (unsigned)s_hat_degree[cand]),
+                             (unsigned)s_hat_hist[cand]);
+                    s_hat_anchor_raw = (uint32_t)cand;
+                }
+                const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                const bool enough_edges =
+                    s_hat_transitions >= PAD_HAT_CALIB_TRANSITIONS ||
+                    (s_hat_transitions >= PAD_HAT_CALIB_MIN_TRANS &&
+                     (now_ms - s_hat_first_ms) >= PAD_HAT_CALIB_WINDOW_MS);
+                if (enough_edges) {
+                    s_hat_frozen = true;
+                    ESP_LOGI(PAD_TAG,
+                             "hat anchor locked raw=%u deg=%u cnt=%u "
+                             "(trans=%u, %u ms)",
+                             (unsigned)s_hat_anchor_raw,
+                             (unsigned)__builtin_popcount(
+                                 (unsigned)s_hat_degree[s_hat_anchor_raw]),
+                             (unsigned)s_hat_hist[s_hat_anchor_raw],
+                             (unsigned)s_hat_transitions,
+                             (unsigned)(now_ms - s_hat_first_ms));
+                }
             }
+            // ⚠ 冻结之后这里什么都不做。锚点是设备的编码约定，跟用户玩了多久、
+            //   按了哪些键无关，运行期再自适应只会把"玩一会就错乱"再犯一遍。
         }
 
         int dir;
@@ -774,9 +919,11 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
 
         if (!s_hat_anchor_logged && s_hat_have_anchor) {
             s_hat_anchor_logged = true;
-            ESP_LOGI(PAD_TAG, "hat anchor raw=%u (lmin=%d lmax=%d size=%u)",
+            ESP_LOGI(PAD_TAG,
+                     "hat anchor raw=%u (lmin=%d lmax=%d size=%u frozen=%d)",
                      (unsigned)s_hat_anchor_raw, (int)f->logical_min,
-                     (int)f->logical_max, (unsigned)f->bit_size);
+                     (int)f->logical_max, (unsigned)f->bit_size,
+                     (int)s_hat_frozen);
         }
         if (dir != 8) {
             hat_dir = dir;              // 取第一个非居中的 hat
@@ -1228,15 +1375,22 @@ static void pad_handle_report(const uint8_t *data, uint16_t len)
     // ⚠ 描述符读失败 / 解析不出字段时（s_hid_tried 已置位但 s_hid.valid 为假），
     //   这里会自然落回 else 分支走启发式 —— 所以下面的三态探测代码一个字都
     //   不能删。
-    if (s_hid.valid && pad_apply_descriptor(data, len)) {
-        // 描述符路径命中，跳过启发式
-    } else {
-        if (s_hid.valid) {
-            // 描述符有效但这一包对不上（换 report / 长度变了）：清掉绑定页上
-            // 描述符推导的那份状态，否则上一帧亮着的圈会一直亮着。
+    if (s_hid.valid) {
+        if (pad_apply_descriptor(data, len)) {
+            // 描述符路径命中，跳过启发式
+        } else {
+            // 描述符有效，但这一包对不上（换 report / 长度变了 / 来了个
+            // Consumer 报之类）。
+            //
+            // ⚠ 这里绝对不能退回启发式。启发式是拿"报文看起来像什么"去套布局，
+            //   拿一包 2 字节的 Consumer 报去套 10 字节的游戏杆布局，解出来全是
+            //   垃圾位；更要命的是这类报文经常是"最后一包"，而 pad_clear_buttons()
+            //   只在**收到报文时**才执行 —— 垃圾按键会一直挂到用户下次按键为止，
+            //   表现就是"玩着玩着角色自己动起来"或者"按什么都没反应"。
+            //   描述符在手的设备，认不出这一包就当没按，比瞎猜安全得多。
             pad_bind_update_live_desc(NULL);
         }
-
+    } else {
         // report ID 三态探测。
         // ⚠ 判据不是「d[0] 变不变」，而是「d[0] 像不像一个 report ID」。
         //   旧判据（不变且非 0 → 有 ID）在「轴在前」的 pad 上必错：d[0] 是左摇杆
@@ -2053,9 +2207,15 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
         // hat 锚点也必须重来：静止中位是**每台设备实测**出来的，换手柄后
         // 沿用上一台的锚点等于把上一台的中位当这一台的方向。
         memset(s_hat_hist, 0, sizeof(s_hat_hist));
+        memset(s_hat_degree, 0, sizeof(s_hat_degree));
         s_hat_have_anchor = false;
         s_hat_anchor_raw = 0;
         s_hat_anchor_logged = false;
+        s_hat_prev_raw = 0;
+        s_hat_prev_valid = false;
+        s_hat_transitions = 0;
+        s_hat_first_ms = 0;
+        s_hat_frozen = false;
         s_hat_distinct = 0;
         s_hat_distinct_logged = false;
         // Report Map 相关：换一台设备 map 就完全不同，句柄和缓冲都必须重来。
