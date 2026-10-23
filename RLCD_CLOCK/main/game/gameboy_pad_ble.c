@@ -151,6 +151,12 @@ static uint32_t s_sec_since_ms;
 
 static uint8_t s_buttons[GB_BTN_COUNT];
 
+// 描述符路径在这**一包报文**里对哪些 GB 键给出了结论（按下或松开都算）。
+// 绑定表据此让路，见 pad_handle_report() 里绑定覆盖那一段的说明。
+// ⚠ 单位是「每一包」不是「整场连接」：每包进来先清零，由 pad_apply_descriptor()
+//   在统一写入时填。否则描述符只按了一次的键会被永久屏蔽掉绑定表。
+static bool s_desc_covered[GB_BTN_COUNT];
+
 // ---------------------------------------------------------------- 已知手柄
 //
 // 上次成功用过的手柄地址存在 NVS 里，下次进游戏页直接对它发连接请求，不必等
@@ -917,6 +923,16 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
             }
         }
 
+        // 每个 hat 取值第一次出现时打一次"原始值 → 方向"。
+        // 方向键出问题时这条日志能一锤定音：八个方向的 raw 各是多少、锚点判成
+        // 了谁、每个 raw 落到了哪个方向，一条链全看见，不用再猜编码族。
+        // 上限就是 hat 的取值个数（≤16），不会刷屏。
+        if (s_hat_hist[raw] == 1u) {
+            ESP_LOGI(PAD_TAG, "hat raw=%u -> dir=%d (anchor=%u, lmin=%d lmax=%d)",
+                     (unsigned)raw, dir, (unsigned)s_hat_anchor_raw,
+                     (int)f->logical_min, (int)f->logical_max);
+        }
+
         if (!s_hat_anchor_logged && s_hat_have_anchor) {
             s_hat_anchor_logged = true;
             ESP_LOGI(PAD_TAG,
@@ -1014,6 +1030,10 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
 
     // ---- 统一写入 ----
     for (int b = 0; b < (int)GB_BTN_COUNT; ++b) {
+        // 记下本包描述符对哪些键有结论，供下面的绑定表让路。
+        // covered[b] 为真只表示"描述符这一包认定了这个键的状态"，按下和松开
+        // 都算 —— 绑定表要让的是"整条结论"，不是"按下"那半边。
+        s_desc_covered[b] = covered[b];
         if (covered[b]) {
             pad_set((gb_button_t)b, pressed[b]);
         }
@@ -1361,6 +1381,7 @@ static void pad_handle_report(const uint8_t *data, uint16_t len)
 
     // 先清零再解析：任何早退路径都不能让上一帧的按键残留。
     pad_clear_buttons();
+    memset(s_desc_covered, 0, sizeof(s_desc_covered));
 
     // 描述符（HID Report Map）解析。
     //
@@ -1455,6 +1476,19 @@ static void pad_handle_report(const uint8_t *data, uint16_t len)
     // 所以在启发式结果之后覆盖一遍。
     // ⚠ 必须用**原始** data/len（未剥 report ID）：绑定记录的下标就是相对
     //   原始报文的。用 body 会在带 ID 的设备上整体偏 1 字节。
+    //
+    // ⚠⚠ 但绑定表只能管**启发式**给不出结论的键，不能盖掉描述符的结论。
+    //   这条是"按下键没反应"那次问题的根因：旧的覆盖写法是
+    //       covered[gb] = true;  pressed[gb] = ... || on;
+    //   covered 是**无条件**置位的 —— 只要 NVS 里存着某条绑定，不管它求值
+    //   出来是 true 还是 false，这一帧都会 pad_set() 一遍。于是只要"下"这条
+    //   绑定稍微不对（当年捕获时抓错了字节，或 expect 记成了别的方向的掩码），
+    //   它每帧都稳定地吐 false，把描述符刚算出来的"下=按下"抹成没按下。
+    //   描述符路径是照 HID 报告描述符逐位解出来的，比任何一次手工绑定都可靠，
+    //   不该被一条陈年绑定压在下面。
+    //
+    //   注意覆盖范围只有"描述符这一包结论过的键"：描述符没管到的键（比如
+    //   描述符里没有的额外按键）仍然完全由绑定表决定，所以手工绑定依然有效。
     {
         // GB 只有 8 个键，而可以绑定的动作有 10 个：X / Y 是 A / B 的「第二组
         // 位置」（见 gameboy_pad_bind.h 里枚举的说明），所以同一 GB 键可能被
@@ -1475,6 +1509,9 @@ static void pad_handle_report(const uint8_t *data, uint16_t len)
             const pad_bind_action_t bind = (pad_bind_action_t)kBindMap[i].bind;
             if (!pad_bind_get(bind).valid) {
                 continue;   // 没绑的动作保留启发式布局的结果，别乱动
+            }
+            if (s_desc_covered[kBindMap[i].gb]) {
+                continue;   // 描述符这一包已经判过了，绑定表让路（见上方说明）
             }
             const bool on = pad_bind_pressed(bind, data, len);
             if (on) {
