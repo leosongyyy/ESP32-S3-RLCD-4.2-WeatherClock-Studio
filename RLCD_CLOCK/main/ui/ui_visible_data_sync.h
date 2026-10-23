@@ -15,7 +15,7 @@ struct ActiveWorkPageState {
     bool calendar = false;
     bool weather_board = false;
     bool flip_clock = false;
-    bool xiaozhi = false;
+    bool game = false;
     bool weather_clock = false;
     bool aggregate_clock = false;
     bool uses_weather_data = false;

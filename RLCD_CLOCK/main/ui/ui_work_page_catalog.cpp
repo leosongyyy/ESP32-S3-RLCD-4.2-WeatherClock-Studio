@@ -6,6 +6,8 @@
 #include "scoped_semaphore_lock.h"
 #include "ui_work_page_order_policy.h"
 
+#include <esp_log.h>
+
 #include <atomic>
 #include <string.h>
 
@@ -45,7 +47,7 @@ constexpr WorkPageDescriptor kWorkPageDescriptors[kWorkPageCount] = {
     {kWorkPageFlipClock, "温湿时钟", 0},
     {kWorkPageCalendar, "日历", kWorkPageTraitLowRefreshIdle},
     {kWorkPageHistory, "温湿历史", kWorkPageTraitLowRefreshIdle},
-    {kWorkPageXiaozhiAI, "小智AI", kWorkPageTraitRequiresNetwork},
+    {kWorkPageGameBoy, "游戏", 0},
     {kWorkPageAggregateClock, "聚合时钟", kWorkPageTraitRequiresNetwork |
          kWorkPageTraitWeatherData | kWorkPageTraitExtendedWeatherData},
 };
@@ -57,7 +59,7 @@ constexpr uint8_t kDefaultWorkPageOrder[kWorkPageCount] = {
     kWorkPageFlipClock,
     kWorkPageCalendar,
     kWorkPageHistory,
-    kWorkPageXiaozhiAI,
+    kWorkPageGameBoy,
     kWorkPageAggregateClock,
 };
 StaticTaskMutex s_work_page_order_mutex;
@@ -68,7 +70,7 @@ uint8_t s_work_page_order[kWorkPageCount] = {
     kWorkPageFlipClock,
     kWorkPageCalendar,
     kWorkPageHistory,
-    kWorkPageXiaozhiAI,
+    kWorkPageGameBoy,
     kWorkPageAggregateClock,
 };
 constexpr const char *kUnknownWorkPageName = "未知页面";
@@ -424,6 +426,16 @@ bool work_page_order_swapped_copy_preserving_home(int first_index,
 int next_enabled_work_page(int current_page)
 {
     const uint8_t page_mask = work_page_enabled_mask_load();
+    // 调试期临时日志：每次翻页都把掩码打出来。放在这里而不是启动路径里，
+    // 是因为启动时的日志会被串口打开前那 1 秒多的时间差吃掉，根本读不到。
+    // 验证完必须删掉。
+    extern int g_page_mask_source;
+    extern uint8_t g_page_mask_raw;
+    ESP_LOGI("PageCfg",
+             "mask=0x%02x current=%d game_bit=%d src=%d raw=0x%02x",
+             page_mask, current_page,
+             (page_mask & work_page_mask(kWorkPageGameBoy)) != 0,
+             g_page_mask_source, g_page_mask_raw);
     uint8_t order[kWorkPageCount] = {};
     if (!copy_normalized_work_page_order(order, sizeof(order), page_mask)) {
         return kFallbackWorkPage;

@@ -7,11 +7,11 @@
 #include "app_metadata.h"
 #include "app_task_readiness.h"
 #include "app_task_startup.h"
+#include "gameboy_rom_store.h"
 #include "lvgl_bsp.h"
 #include "alarm_services_internal.h"
 #include "battery_runtime_state_internal.h"
 #include "pomodoro_services_internal.h"
-#include "weather_city_mcp_internal.h"
 #include "audio_services.h"
 #include "audio_services_internal.h"
 #include "custom_assets_internal.h"
@@ -40,7 +40,6 @@
 #include "ui_work_page_catalog_internal.h"
 #include "weather_state_internal.h"
 #include "wifi_portal_state_internal.h"
-#include "xiaozhi_ai.h"
 
 #include "i2c_equipment.h"
 
@@ -71,7 +70,6 @@
 #define MAIN_OTA_RUNTIME_STATE_INIT_FAILED_LOG_FORMAT "OTA runtime state initialization failed"
 #define MAIN_DAILY_SAYING_STATE_INIT_FAILED_LOG_FORMAT "daily saying state initialization failed"
 #define MAIN_MANUAL_WEATHER_CITY_STATE_INIT_FAILED_LOG_FORMAT "manual weather city state initialization failed"
-#define MAIN_WEATHER_CITY_MCP_STATE_INIT_FAILED_LOG_FORMAT "weather city MCP state initialization failed"
 #define MAIN_WIFI_PORTAL_STATE_INIT_FAILED_LOG_FORMAT "Wi-Fi portal state initialization failed"
 #define MAIN_BATTERY_RUNTIME_STATE_INIT_FAILED_LOG_FORMAT "battery runtime state initialization failed"
 #define MAIN_INFO_PAGE_STATE_INIT_FAILED_LOG_FORMAT "info page state initialization failed"
@@ -140,7 +138,6 @@ constexpr AppInitializerSpec kCoreRuntimeStateInitializers[] = {
 constexpr AppInitializerSpec kFeatureRuntimeInitializers[] = {
     {alarm_services_init, MAIN_ALARM_STATE_INIT_FAILED_LOG_FORMAT},
     {pomodoro_services_init, MAIN_POMODORO_STATE_INIT_FAILED_LOG_FORMAT},
-    {weather_city_mcp_init, MAIN_WEATHER_CITY_MCP_STATE_INIT_FAILED_LOG_FORMAT},
 };
 
 template <size_t Count>
@@ -352,7 +349,6 @@ extern "C" void app_main(void)
     }
     init_wifi();
     park_unused_audio_peripherals();
-    xiaozhi_ai_init();
     if (!initialize_app_states(kFeatureRuntimeInitializers)) {
         cleanup_failed_startup_resources();
         return;
@@ -427,6 +423,11 @@ extern "C" void app_main(void)
                      regular_app_task_missing_ready_mask(task_startup,
                                                          ready_mask)));
     }
+
+    // 收尾后起一次性 TF 卡自检（内部延迟 8 秒再挂卡，不阻塞启动）。
+    // ROM 平时只在进入游戏页时才碰卡，没有这段就只能在有人按 BOOT 键翻页时
+    // 才看得到硬件到底认没认到卡——启动阶段又抓不到日志。
+    rom_store_startup_selfcheck();
 
     if (setup_prompt_playback_pending()) {
         vTaskDelay(pdMS_TO_TICKS(kSetupPromptStartDelayMs));

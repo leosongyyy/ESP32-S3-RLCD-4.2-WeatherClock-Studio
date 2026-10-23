@@ -30,7 +30,6 @@
 #include "ui_text_format.h"
 #include "ui_work_page_catalog.h"
 #include "work_page_ids.h"
-#include "xiaozhi_auto_return_state.h"
 
 #include <cstdarg>
 #include <esp_log.h>
@@ -47,7 +46,8 @@ constexpr const char *kSettingsSyncBusyFeedback = "请等待同步完成";
 constexpr const char *kSettingsOfflineEnabledFeedback = "离线模式已开启";
 constexpr const char *kSettingsOfflineDisabledFeedback = "离线模式已关闭";
 constexpr const char *kOfflinePageUnavailableFeedback = "当前处于离线模式";
-constexpr const char *kManualWeatherCityEditFeedback = "请进入配网页/小智/网页修改";
+// 小智已整体移除（Phase 1），文案里不能再提它——用户按提示会去找一个不存在的入口。
+constexpr const char *kManualWeatherCityEditFeedback = "请进入配网页修改";
 constexpr const char *kManualWeatherCityClearConfirmFeedback = "再次确认清除";
 constexpr const char *kManualWeatherCityAutoFeedback = "已恢复自动定位";
 constexpr const char *kManualNtpSyncFeedback = "正在同步时间...";
@@ -62,15 +62,11 @@ constexpr const char *kAllDayChimeDisabledFeedback = "全天提醒已关闭";
 constexpr const char *kPageOrderInstructionFeedback = "BOOT交换并保存";
 constexpr const char *kPageSwitchInstructionFeedback = "页面开关：BOOT切换";
 constexpr const char *kLastWorkPageFeedback = "至少保留一个页面";
-constexpr const char *kXiaozhiNeedsHomeFeedback = "请至少保留一个非小智页面";
-constexpr const char *kXiaozhiHomeBlockedFeedback = "小智AI不能设为主页";
-constexpr const char *kPomodoroRunningFeedback = "请先取消番茄钟";
-constexpr const char *kXiaozhiAutoReturnEnabledFeedback = "小智节能已开启";
-constexpr const char *kXiaozhiAutoReturnDisabledFeedback = "小智节能已关闭";
+constexpr const char *kPageOrderBlockedFeedback = "页面顺序不可用";
 constexpr const char *kGalleryRotationBuiltinFeedback = "默认图片固定24h";
 constexpr const char *kGalleryRotationFeedbackFormat = "图片切换 %s";
 constexpr const char *kAlarmDisabledFeedback = "闹钟已关闭";
-constexpr const char *kAlarmSetByXiaozhiFeedback = "请通过小智AI设置";
+constexpr const char *kAlarmSetByVoiceUnavailableFeedback = "闹钟暂不可用";
 constexpr const char *kWorkPageFeedbackFormat = "%s%s";
 constexpr const char *kWorkPageEnabledSuffix = "已开启";
 constexpr const char *kWorkPageDisabledSuffix = "已关闭";
@@ -190,7 +186,7 @@ void handle_page_order_settings_action(
     uint8_t next_order[kWorkPageCount] = {};
     if (!work_page_order_swapped_copy_preserving_home(
             current, next, next_order, sizeof(next_order))) {
-        set_settings_feedback(kXiaozhiHomeBlockedFeedback, kSettingsFeedbackDefaultMs);
+        set_settings_feedback(kPageOrderBlockedFeedback, kSettingsFeedbackDefaultMs);
         return;
     }
     if (set_work_page_order_setting(next_order, sizeof(next_order))) {
@@ -318,13 +314,7 @@ void handle_display_settings_action(
             return;
         }
         if (!work_page_mask_has_valid_home(next_mask)) {
-            set_settings_feedback(kXiaozhiNeedsHomeFeedback, kSettingsFeedbackInstructionMs);
-            return;
-        }
-        if (page == kWorkPageXiaozhiAI &&
-            page_was_enabled &&
-            pomodoro_is_running()) {
-            set_settings_feedback(kPomodoroRunningFeedback, kSettingsFeedbackInstructionMs);
+            set_settings_feedback(kLastWorkPageFeedback, kSettingsFeedbackInstructionMs);
             return;
         }
         if (!set_work_page_enabled_mask_setting(next_mask)) {
@@ -357,7 +347,8 @@ void handle_display_settings_action(
     }
     if (selected == kDisplaySettingsAlarmItem) {
         if (!alarm_is_enabled()) {
-            set_settings_feedback(kAlarmSetByXiaozhiFeedback, kSettingsFeedbackInstructionMs);
+            set_settings_feedback(kAlarmSetByVoiceUnavailableFeedback,
+                                  kSettingsFeedbackInstructionMs);
             return;
         }
         if (!alarm_disable()) {
@@ -365,17 +356,6 @@ void handle_display_settings_action(
             return;
         }
         set_settings_feedback(kAlarmDisabledFeedback, kSettingsFeedbackDefaultMs);
-        return;
-    }
-    if (selected == kDisplaySettingsXiaozhiAutoReturnItem) {
-        const bool enabled = !xiaozhi_auto_return_enabled_load();
-        if (!set_xiaozhi_auto_return_setting(enabled)) {
-            set_settings_feedback(kSettingsSaveFailedFeedback, kSettingsFeedbackDefaultMs);
-            return;
-        }
-        set_settings_feedback(enabled ? kXiaozhiAutoReturnEnabledFeedback
-                                      : kXiaozhiAutoReturnDisabledFeedback,
-                              kSettingsFeedbackDefaultMs);
         return;
     }
     if (selected == kDisplaySettingsGalleryRotationItem) {

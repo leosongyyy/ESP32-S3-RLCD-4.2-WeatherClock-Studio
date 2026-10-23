@@ -22,7 +22,6 @@ static_assert(kProvisioningFeedbackBit == (1U << 14));
 static_assert(kVisibleWeatherSyncBit == (1U << 15));
 static_assert(kVisibleSayingSyncBit == (1U << 16));
 static_assert(kNtpSyncCompletedBit == (1U << 17));
-static_assert(kXiaozhiPageStateChangedBit == (1U << 18));
 static_assert((kWifiConnectedBit | kTimeSyncedBit | kWeatherReadyBit |
                kProvisioningSyncBit | kManualNtpSyncBit |
                kManualWeatherSyncBit | kOtaCheckBit | kOtaInstallBit |
@@ -30,7 +29,7 @@ static_assert((kWifiConnectedBit | kTimeSyncedBit | kWeatherReadyBit |
                kNetworkDiagBit | kNetworkStateChangedBit |
                kSetupPortalStartBit | kProvisioningFeedbackBit |
                kVisibleWeatherSyncBit | kVisibleSayingSyncBit |
-               kNtpSyncCompletedBit | kXiaozhiPageStateChangedBit) ==
+               kNtpSyncCompletedBit) ==
               ((1U << 19) - 1U));
 
 namespace {

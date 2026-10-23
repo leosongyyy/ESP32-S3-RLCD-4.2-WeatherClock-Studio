@@ -5,6 +5,7 @@
 #include "app_display_config.h"
 #include "app_hardware.h"
 #include "app_metadata.h"
+#include "gameboy_runtime.h"
 #include "ota_runtime_state.h"
 #include "runtime_health.h"
 #include "ui_display_diag_policy.h"
@@ -15,6 +16,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <atomic>
 #include <inttypes.h>
 
 namespace {
@@ -50,6 +52,9 @@ struct DisplayFlushRuntimeState {
 
 constexpr uint32_t kDisplayFlushRuntimeInitializedMagic = 0x44535046U;
 EXT_RAM_BSS_ATTR DisplayFlushRuntimeState s_display_flush_runtime;
+
+// flush_callback() 的进入计数，只被 ui_task 写、被模拟器任务读（见 .h 的说明）。
+std::atomic<uint32_t> s_flush_entry_count{0};
 
 DisplayFlushRuntimeState &display_flush_runtime()
 {
@@ -126,8 +131,22 @@ static_assert(bridged_flush_ranges_merge_once(),
               "bridging flush ranges must collapse into one covered interval");
 } // namespace
 
+uint32_t ui_display_flush_entry_count(void)
+{
+    return s_flush_entry_count.load();
+}
+
 void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
+    ++s_flush_entry_count;
+
+    // L0 帧通部门闸：游戏运行时整屏归模拟器任务所有，LVGL 结果直接丢弃。
+    // 必须仍然调用 lv_disp_flush_ready()，否则 LVGL 会卡在等待刷新完成。
+    if (gameboy_display_owner()) {
+        lv_disp_flush_ready(drv);
+        return;
+    }
+
     DisplayPort &display = app_display();
     DisplayFlushRuntimeState &runtime = display_flush_runtime();
 

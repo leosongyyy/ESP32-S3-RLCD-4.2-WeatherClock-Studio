@@ -43,9 +43,9 @@ Module ownership:
 - `sdl_preview_widgets.*`: shared labels, monochrome bars and canvas drawing primitives.
 - `sdl_preview_settings.*`: settings-page previews.
 - `sdl_preview_calendar.*`: calendar grid and lunar preview body.
-- `sdl_preview_flip_cards.*`: shared inverted DSEG cards used by the temperature/humidity clock and Xiaozhi previews.
+- `sdl_preview_flip_cards.*`: shared inverted DSEG cards used by the temperature/humidity clock previews.
 - `sdl_preview_flip_clock.*`: temperature/humidity clock sensor, mood and date preview body.
 - `sdl_preview_gallery.*`: gallery image, block-clock and daily-saying preview body.
 - `sdl_preview_history.*`: temperature/humidity history chart body.
 - `sdl_preview_weather.*`: weather-board body and shared QWeather icon conversion.
-- `sdl_preview_xiaozhi.*`: Xiaozhi dialogue, preparing and Pomodoro preview body.
+- `sdl_preview_game.*`: reserved for the Game Boy preview body (placeholder until the emulator lands).

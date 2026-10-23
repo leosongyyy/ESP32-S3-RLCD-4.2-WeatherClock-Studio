@@ -19,7 +19,6 @@
 #include "offline_mode_state_internal.h"
 #include "ui_gallery_rotation_state_internal.h"
 #include "ui_work_page_catalog_internal.h"
-#include "xiaozhi_auto_return_state_internal.h"
 
 #include <esp_attr.h>
 #include <esp_log.h>
@@ -40,7 +39,6 @@ using network_config_keys::kWifiBackupSsidKey;
 using network_config_keys::kWifiPassKey;
 using network_config_keys::kWifiPreferredSlotKey;
 using network_config_keys::kWifiSsidKey;
-using network_config_keys::kXiaozhiAutoReturnKey;
 using network_config_keys::kGalleryRotationKey;
 
 namespace {
@@ -76,7 +74,6 @@ struct LoadedSavedConfig {
     uint8_t sound;
     uint8_t page_mask;
     uint8_t offline;
-    uint8_t xiaozhi_auto_return;
     uint8_t gallery_rotation;
     uint8_t preferred_wifi_slot;
     uint8_t weather_provider;
@@ -87,8 +84,8 @@ struct LoadedSavedConfig {
 EXT_RAM_BSS_ATTR LoadedSavedConfig s_loaded_saved_config_workspace;
 
 static_assert(kWorkPageCount <= 8, "work page enabled mask is stored as uint8_t");
-static_assert((kPageMaskV4KnownBits & work_page_mask_bit(kWorkPageXiaozhiAI)) == 0,
-              "page mask v4 must not include Xiaozhi AI page");
+static_assert((kPageMaskV4KnownBits & work_page_mask_bit(kWorkPageGameBoy)) == 0,
+              "page mask v4 must not include the game page");
 static_assert(kPageMaskV5KnownBits == static_cast<uint8_t>((1U << kWorkPageCount) - 1U),
               "page mask v5 must cover every current work page");
 static_assert((kPageMaskV5KnownBits & kWeatherBoardPageMask) == kWeatherBoardPageMask,
@@ -115,6 +112,28 @@ bool apply_loaded_page_config(uint8_t page_mask,
                               bool have_page_order)
 {
     const uint8_t online_mask = normalize_work_page_enabled_mask(page_mask);
+    // 调试期临时日志：把启动时算出来的页面启用掩码打出来。
+    // 「按 BOOT 翻页翻不到游戏页」这个问题只有这一行能定性 —— 掩码里
+    // 第 6 位（kWorkPageGameBoy）没有，就说明是配置迁移没把它带上。
+    // 验证完必须删掉。
+    {
+        static const char *kTag = "PageCfg";
+        uint8_t enabled[8] = {0};
+        int n = 0;
+        for (int p = 0; p < kWorkPageCount; ++p) {
+            if ((online_mask & static_cast<uint8_t>(1U << p)) != 0) {
+                enabled[n++] = static_cast<uint8_t>(p);
+            }
+        }
+        ESP_LOGI(kTag,
+                 "raw_mask=0x%02x online_mask=0x%02x game_enabled=%d "
+                 "offline=%d enabled=%d,%d,%d,%d,%d,%d,%d,%d",
+                 page_mask, online_mask,
+                 (online_mask & static_cast<uint8_t>(1U << kWorkPageGameBoy)) != 0,
+                 (int)offline_mode_enabled_load(),
+                 enabled[0], enabled[1], enabled[2], enabled[3],
+                 enabled[4], enabled[5], enabled[6], enabled[7]);
+    }
     work_page_enabled_mask_store(online_mask);
     if (have_page_order && page_order) {
         work_page_order_replace(page_order, kWorkPageCount);
@@ -128,6 +147,11 @@ bool apply_loaded_page_config(uint8_t page_mask,
             work_page_enabled_mask_store(runtime_mask);
         }
     }
+    active_work_page_store(first_enabled_work_page());
+    // 老配置里没有游戏页（第 6 位为 0），补一次。写在页面配置应用之后，
+    // 因为要先知道用户原来开了哪几页，才能只补这一位、不动其他页。
+    (void)ensure_game_page_enabled_once();
+    // 掩码可能刚被补过，重新取一次再定首页，否则本次开机落到的还是旧首页。
     active_work_page_store(first_enabled_work_page());
     return runtime_mask != online_mask;
 }
@@ -158,7 +182,6 @@ void initialize_loaded_saved_config(LoadedSavedConfig *loaded)
     loaded->host_err = ESP_FAIL;
     loaded->volume = chime_settings::kDefaultVolumePercent;
     loaded->page_mask = kPageMaskV5KnownBits;
-    loaded->xiaozhi_auto_return = kDefaultXiaozhiAutoReturnEnabled ? 1 : 0;
     loaded->gallery_rotation = kDefaultGalleryRotationPeriod;
     loaded->preferred_wifi_slot =
         static_cast<uint8_t>(WifiCredentialSlot::kSlotA);
@@ -200,8 +223,6 @@ void read_saved_config(nvs_handle_t nvs, LoadedSavedConfig *loaded)
     loaded->page_mask = read_saved_page_mask(nvs);
     loaded->offline = read_nvs_u8_or_default(nvs, kOfflineModeKey, 0);
     loaded->weather_provider = read_nvs_u8_or_default(nvs, network_config_keys::kWeatherProviderKey, 0);
-    loaded->xiaozhi_auto_return = read_nvs_u8_or_default(
-        nvs, kXiaozhiAutoReturnKey, kDefaultXiaozhiAutoReturnEnabled ? 1 : 0);
     loaded->gallery_rotation = read_nvs_u8_or_default(
         nvs, kGalleryRotationKey, kDefaultGalleryRotationPeriod);
     loaded->preferred_wifi_slot = read_nvs_u8_or_default(
@@ -258,7 +279,6 @@ bool apply_loaded_config(const LoadedSavedConfig &loaded)
     };
     chime_runtime_snapshot_store(chime);
     offline_mode_enabled_store(nvs_u8_to_bool(loaded.offline));
-    xiaozhi_auto_return_enabled_store(nvs_u8_to_bool(loaded.xiaozhi_auto_return));
     gallery_rotation_period_store(loaded.gallery_rotation);
     return apply_loaded_page_config(loaded.page_mask, loaded.page_order, loaded.have_page_order);
 }

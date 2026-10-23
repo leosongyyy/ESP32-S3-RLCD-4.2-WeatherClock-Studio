@@ -19,7 +19,6 @@
 #include "ui_widgets.h"
 #include "ui_work_page_catalog.h"
 #include "work_page_ids.h"
-#include "xiaozhi_auto_return_state.h"
 
 #include <esp_attr.h>
 #include <esp_log.h>
@@ -89,8 +88,6 @@ SettingsSecondaryStateSnapshot settings_secondary_state_snapshot(
             snapshot.alarm_enabled = alarm.enabled;
             snapshot.alarm_hour = alarm.hour;
             snapshot.alarm_minute = alarm.minute;
-            snapshot.xiaozhi_auto_return_enabled =
-                xiaozhi_auto_return_enabled_load();
         }
     }
     return snapshot;
@@ -489,12 +486,9 @@ void update_settings_switch_slot(int index,
                primary == kSettingsPrimaryDisplay &&
                !navigation.page_toggle_mode &&
                !navigation.page_order_mode &&
-               (index == kDisplaySettingsAlarmItem ||
-                index == kDisplaySettingsXiaozhiAutoReturnItem)) {
+               index == kDisplaySettingsAlarmItem) {
         dot_visible = true;
-        dot_on = index == kDisplaySettingsAlarmItem
-                     ? secondary_state.alarm_enabled
-                     : secondary_state.xiaozhi_auto_return_enabled;
+        dot_on = secondary_state.alarm_enabled;
     }
     if (s_settings_switch_dots[index]) {
         set_obj_visible(s_settings_switch_dots[index], dot_visible);

@@ -6,6 +6,11 @@
 
 #include <string.h>
 
+// 调试期临时：放在命名空间外面，否则 ui_work_page_catalog.cpp 里那句 extern
+// 会声明出另一个符号（命名空间内变量会被 mangle），链接期报 undefined reference。
+int g_page_mask_source = 0;   // 1=v6 2=v5 3=v4 4=default
+uint8_t g_page_mask_raw = 0;
+
 namespace network_page_storage {
 namespace {
 bool saved_page_order_matches(nvs_handle_t nvs,
@@ -29,14 +34,22 @@ uint8_t read_saved_page_mask(nvs_handle_t nvs)
 {
     uint8_t page_mask = kCurrentKnownPageMask;
     if (nvs_get_u8(nvs, kPageMaskV6Key, &page_mask) == ESP_OK) {
+        g_page_mask_source = 1;
+        g_page_mask_raw = page_mask;
         return normalize_work_page_enabled_mask(page_mask);
     }
     if (nvs_get_u8(nvs, kPageMaskV5Key, &page_mask) == ESP_OK) {
+        g_page_mask_source = 2;
+        g_page_mask_raw = page_mask;
         return normalize_work_page_enabled_mask(page_mask | (1U << kWorkPageAggregateClock));
     }
     if (nvs_get_u8(nvs, kPageMaskV4Key, &page_mask) == ESP_OK) {
+        g_page_mask_source = 3;
+        g_page_mask_raw = page_mask;
         return normalize_work_page_enabled_mask(migrate_v4_page_mask(page_mask) | (1U << kWorkPageAggregateClock));
     }
+    g_page_mask_source = 4;
+    g_page_mask_raw = page_mask;
     return page_mask;
 }
 

@@ -12,7 +12,6 @@
 #include "ui_progress.h"
 #include "ui_setup_status.h"
 #include "ui_settings_ota_panel.h"
-#include "ui_xiaozhi.h"
 
 namespace {
 void clear_work_status_refs()
@@ -51,7 +50,6 @@ void clear_clock_object_refs()
     clear_calendar_object_refs();
     clear_weather_clock_refs();
     clear_flip_clock_object_refs();
-    clear_xiaozhi_page_object_refs();
     clear_aggregate_clock_refs();
     clear_work_page_day_progress_refs();
     clear_work_page_battery_refs();

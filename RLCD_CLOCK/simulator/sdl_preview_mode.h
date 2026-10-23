@@ -19,7 +19,7 @@ struct Selection {
     bool history = false;
     bool gallery = false;
     bool flip_clock = false;
-    bool xiaozhi = false;
+    bool game = false;
     bool calendar = false;
     bool weather_board = false;
     bool info = false;
@@ -27,7 +27,7 @@ struct Selection {
 
     bool alternate_work_page() const
     {
-        return history || gallery || flip_clock || xiaozhi || calendar ||
+        return history || gallery || flip_clock || game || calendar ||
                weather_board || info || aggregate_clock;
     }
 };
@@ -38,7 +38,7 @@ inline Selection selection_for(const char *mode)
         is(mode, "history"),
         is(mode, "gallery"),
         is(mode, "flip_clock"),
-        has_prefix(mode, "xiaozhi"),
+        has_prefix(mode, "game"),
         is(mode, "calendar"),
         is(mode, "weather_board"),
         is(mode, "info"),

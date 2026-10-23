@@ -36,10 +36,6 @@ inline constexpr EventBits_t kVisibleSayingSyncBit = 1U << 16;
 // SNTP publishes this edge after applying a network time sample. Only the
 // active NTP wait consumes it; it is not a network-sync request.
 inline constexpr EventBits_t kNtpSyncCompletedBit = 1U << 17;
-// Page exit and alarm suspension publish this level while Xiaozhi is inactive.
-// It lets a pending Wi-Fi connection wait release high-power ownership without
-// borrowing or consuming the shared network-runtime change edge.
-inline constexpr EventBits_t kXiaozhiPageStateChangedBit = 1U << 18;
 
 bool app_event_group_ready();
 

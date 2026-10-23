@@ -444,6 +444,54 @@ void DisplayPort::RLCD_DisplayXRange(uint16_t x1, uint16_t x2) {
     }
 }
 
+uint8_t *DisplayPort::RLCD_Framebuffer()
+{
+    if (!ready_ || !DispBuffer || DisplayLen <= 0) {
+        return NULL;
+    }
+    return DispBuffer;
+}
+
+int DisplayPort::RLCD_FramebufferSize()
+{
+    if (!ready_ || !DispBuffer) {
+        return 0;
+    }
+    return DisplayLen;
+}
+
+void DisplayPort::RLCD_Present()
+{
+    RLCD_Display();
+}
+
+bool DisplayPort::RLCD_FillRange(uint16_t byte_x1, uint16_t byte_x2, uint8_t value)
+{
+    if (!ready_ || !DispBuffer || DisplayLen <= 0 || width_ <= 0 || height_ <= 0) {
+        return false;
+    }
+    // 横屏 LUT 下 index = byte_x * (height/4) + block_y，block_y 取 0..height/4-1，
+    // 因此同一 byte_x 的所有字节在帧缓冲里是连续的。
+    constexpr int kRowsPerPanelByteX = 4;
+    if (width_ % 2 != 0 || height_ % kRowsPerPanelByteX != 0) {
+        return false;
+    }
+    const uint16_t max_byte_x = static_cast<uint16_t>(width_ / 2) - 1U;
+    if (byte_x1 > byte_x2 || byte_x2 > max_byte_x) {
+        return false;
+    }
+    const int bytes_per_byte_x = height_ / kRowsPerPanelByteX;
+    const size_t offset = static_cast<size_t>(byte_x1) *
+                          static_cast<size_t>(bytes_per_byte_x);
+    const size_t length = static_cast<size_t>(byte_x2 - byte_x1 + 1U) *
+                          static_cast<size_t>(bytes_per_byte_x);
+    if (offset + length > static_cast<size_t>(DisplayLen)) {
+        return false;
+    }
+    memset(DispBuffer + offset, value, length);
+    return true;
+}
+
 void DisplayPort::RLCD_Reset(void) {
     Set_ResetIOLevel(1);
     vTaskDelay(kRlcdResetHighDelay);

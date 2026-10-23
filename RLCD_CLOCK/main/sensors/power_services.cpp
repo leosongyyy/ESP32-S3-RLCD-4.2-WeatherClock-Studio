@@ -259,7 +259,11 @@ void init_power_management()
         esp_pm_config_t pm_config = {};
         pm_config.max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
         pm_config.min_freq_mhz = CONFIG_XTAL_FREQ;
-        pm_config.light_sleep_enable = true;
+        // 调试期临时改为 false：light sleep 会把 USB-Serial/JTAG 一起挂死，
+        // 休眠期间和唤醒瞬间主机都读不到日志。验证完必须改回 true。
+        // 这个开关必须保持和 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y 并存，
+        // 否则 esp_pm_configure() 会拒绝配置（详见 sdkconfig 里的注释）。
+        pm_config.light_sleep_enable = false;
 
         esp_err_t err = esp_pm_configure(&pm_config);
         if (err != ESP_OK) {

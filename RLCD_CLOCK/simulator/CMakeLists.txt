@@ -56,7 +56,6 @@ add_executable(weather_clock_sdl
     "sdl_preview_weather.cpp"
     "sdl_preview_widgets.cpp"
     "sdl_preview_work_status.cpp"
-    "sdl_preview_xiaozhi.cpp"
     "../main/ui/ui_dseg_render.cpp"
     "../main/ui/ui_history_format.cpp"
     "../main/ui/ui_aggregate_clock_view.cpp"

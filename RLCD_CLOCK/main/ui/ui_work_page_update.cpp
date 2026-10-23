@@ -8,12 +8,12 @@
 #include "ui_clock_time.h"
 #include "ui_draw_cache.h"
 #include "ui_flip_clock.h"
+#include "ui_game.h"
 #include "ui_page_state.h"
 #include "ui_progress.h"
 #include "ui_widgets.h"
 #include "ui_work_pages.h"
 #include "ui_work_status.h"
-#include "ui_xiaozhi.h"
 #include "weather_state.h"
 #include "work_page_ids.h"
 
@@ -43,8 +43,8 @@ bool update_visible_work_page_body(const struct tm &local,
     if (state.flip_clock) {
         changed |= update_flip_clock_page(local, time_snapshot);
     }
-    if (state.xiaozhi) {
-        changed |= update_xiaozhi_page(local);
+    if (state.game) {
+        changed |= update_game_page(local);
     }
     return changed;
 }

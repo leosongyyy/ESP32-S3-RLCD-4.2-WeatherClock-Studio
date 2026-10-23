@@ -1,4 +1,4 @@
-// 实现温湿时钟与小智预览共用的反显数字牌创建和绘制。
+// 实现温湿时钟预览使用的反显数字牌创建和绘制。
 #include "sdl_preview_flip_cards.h"
 
 #include <vector>

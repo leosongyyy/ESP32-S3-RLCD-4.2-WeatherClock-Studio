@@ -31,10 +31,53 @@ constexpr size_t kPortalEscapedSsidSize =
 constexpr size_t kPortalEscapedCitySize =
     (kPortalWeatherCityNameSize - 1) * kPortalLongestHtmlEntitySize + 1;
 constexpr size_t kPortalSaveExtraTextSize = 220;
-constexpr size_t kPortalRootHtmlSize = 24576;
+// 24KB 是 Phase 1 的余量基线；新增「游戏 ROM」区块（约 1.8KB）后上调到 28KB，
+// 缓冲在 PSRAM 上分配，代价可忽略。
+constexpr size_t kPortalRootHtmlSize = 28672;
 constexpr size_t kPortalSaveResultHtmlSize = 12288;
 constexpr size_t kPortalOfflineResultHtmlSize = 10240;
 constexpr const char *kPortalSectionCloseHtml = "</div></div></section>";
+// 游戏 ROM 区块：<input type=file> + fetch 直发原始字节（不做 multipart 解析）。
+// 注意这里刻意不使用 '%' 字符，避免与 html_append 的格式化串冲突。
+constexpr const char *kPortalRomSectionHtml =
+    "<section style='margin-top:18px;padding:16px;border:1px solid #d8dde6;border-radius:12px'>"
+    "<h2 style='margin:0 0 6px;font-size:17px'>游戏 ROM</h2>"
+    "<p style='margin:0 0 10px;color:#5b6472;font-size:13px'>"
+    "支持 .gb / .gbc，单个不超过 1.3MB；文件名只能用字母、数字、点、下划线、短横线。</p>"
+    "<input id='romFile' type='file' accept='.gb,.gbc'>"
+    "<button type='button' id='romUp' style='margin-left:8px;padding:6px 14px'>上传</button>"
+    "<p id='romMsg' style='color:#5b6472;font-size:13px;min-height:18px;margin:8px 0'></p>"
+    "<div id='romList' style='font-size:13px;line-height:1.7'></div></section>"
+    "<script>(function(){"
+    "var f=document.getElementById('romFile'),u=document.getElementById('romUp'),"
+    "m=document.getElementById('romMsg'),b=document.getElementById('romList');"
+    "function msg(t){m.textContent=t;}"
+    "function ok(n){return /^[A-Za-z0-9._-]+$/.test(n)&&/\\.(gb|gbc)$/i.test(n);}"
+    "function refresh(){fetch('/roms/list').then(function(r){return r.text();}).then(function(t){"
+    "while(b.firstChild)b.removeChild(b.firstChild);"
+    "var ls=t.split('\\n'),any=false;"
+    "for(var i=0;i<ls.length;i++){if(!ls[i])continue;any=true;var p=ls[i].split('\\t');"
+    "var row=document.createElement('div');row.style.display='flex';"
+    "row.style.justifyContent='space-between';row.style.gap='8px';"
+    "var s=document.createElement('span');s.textContent=p[0];"
+    "var d=document.createElement('button');d.type='button';d.textContent='删除';"
+    "d.style.padding='2px 10px';d.setAttribute('data-n',p[0]);"
+    "d.onclick=function(){var n=this.getAttribute('data-n');"
+    "if(!confirm('确认删除 '+n+' ?'))return;"
+    "fetch('/roms/delete?name='+encodeURIComponent(n),{method:'POST'}).then(function(){"
+    "msg('已删除');refresh();});};"
+    "row.appendChild(s);row.appendChild(d);b.appendChild(row);}"
+    "if(!any){b.textContent='暂无 ROM';}});}"
+    "u.onclick=function(){var fl=f.files[0];if(!fl){msg('请先选择文件');return;}"
+    "if(!ok(fl.name)){msg('文件名不合规（仅字母数字 . _ -，且以 .gb/.gbc 结尾）');return;}"
+    "msg('上传中，请勿关闭页面');"
+    "fetch('/roms/upload?name='+encodeURIComponent(fl.name),"
+    "{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:fl})"
+    ".then(function(r){return r.text().then(function(t){return[r.status,t];});})"
+    ".then(function(a){msg(a[0]===200?'上传成功，稍后可在设备游戏页选择':('失败：'+a[1]));"
+    "setTimeout(refresh,800);})"
+    ".catch(function(){msg('上传失败，请重试');});};"
+    "refresh();})();</script>";
 constexpr const char *kPortalHtmlContentType = "text/html; charset=utf-8";
 constexpr const char *kPortalHttpStatusInternalError = "500 Internal Server Error";
 constexpr const char *kPortalHttpStatusFound = "302 Found";
@@ -381,6 +424,7 @@ esp_err_t root_get_handler(httpd_req_t *req)
     }
     html_append(html.data(), html.size(), "</section>");
     append_wifi_scan_list(html.data(), html.size());
+    html_append(html.data(), html.size(), "%s", kPortalRomSectionHtml);
     html_append(html.data(), html.size(), "</main></body></html>");
     esp_err_t err = send_portal_html(req, html.data());
     if (err == ESP_OK && save_result == WifiPortalSaveResult::kSuccess) {

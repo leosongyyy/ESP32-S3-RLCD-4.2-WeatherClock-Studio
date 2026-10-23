@@ -10,13 +10,13 @@
 #include "ui_clock_header_objects.h"
 #include "ui_clock_surface_objects.h"
 #include "ui_flip_clock.h"
+#include "ui_game.h"
 #include "ui_progress.h"
 #include "ui_setup_status.h"
 #include "ui_status_refresh_policy.h"
 #include "ui_widgets.h"
 #include "ui_work_page_catalog.h"
 #include "ui_work_pages.h"
-#include "ui_xiaozhi.h"
 #include "weather_state.h"
 #include "wifi_portal_state.h"
 #include "work_page_ids.h"
@@ -71,8 +71,8 @@ lv_obj_t *build_work_page_root(int page)
     case kWorkPageFlipClock:
         build_flip_clock_page();
         break;
-    case kWorkPageXiaozhiAI:
-        build_xiaozhi_page();
+    case kWorkPageGameBoy:
+        build_game_page();
         break;
     case kWorkPageAggregateClock:
         build_aggregate_clock_page();

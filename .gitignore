@@ -1,0 +1,15 @@
+# ESP-IDF 本地编译输出。每个目录两百多 MB，绝不能进仓库。
+/build-game/
+/build-oem/
+/build-utf8/
+build/
+
+# IDF 组件管理器生成的依赖源码。内容由 dependencies.lock 决定，
+# clone 之后跑 idf.py build 会自动重新拉取，不需要入库。
+/RLCD_CLOCK/managed_components/
+
+# 系统与编辑器垃圾
+.DS_Store
+.vscode/
+.idea/
+*.swp

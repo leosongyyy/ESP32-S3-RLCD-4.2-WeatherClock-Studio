@@ -1,42 +1,4 @@
 dependencies:
-  espressif/dl_fft:
-    component_hash: 2f319e72f3ab6f673c83849d6a14b68c21165d4dce24e12af7c13714ba35a6e0
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.0'
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 0.5.0
-  espressif/esp-dsp:
-    component_hash: 42dce32d46ac93dc11f60d368e29a830e9661c7345d794b8a45c343479cae636
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=4.2'
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 1.7.0
-  espressif/esp-sr:
-    component_hash: 46b1f70f8b561714b958d1c455213cca07162755d1b8df53498081199f15136f
-    dependencies:
-    - name: espressif/dl_fft
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=0.2.0'
-    - name: espressif/esp-dsp
-      registry_url: https://components.espressif.com
-      require: private
-      version: 1.7.0
-    - name: idf
-      require: private
-      version: '>=5.0'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 2.3.1
   espressif/esp_audio_codec:
     component_hash: af4663830bc73eca58febcc34a976d003465e78ed57458aa00a14b231e392ca1
     dependencies:
@@ -47,13 +9,6 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.4.1
-  espressif/esp_audio_effects:
-    component_hash: 8fa2bf7356a3c7fb9a9c7d2185aba474fa033b0506886c70752f67c42cd81b3f
-    dependencies: []
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.2.1
   idf:
     source:
       type: idf
@@ -66,11 +21,9 @@ dependencies:
       type: service
     version: 8.4.0
 direct_dependencies:
-- espressif/esp-sr
 - espressif/esp_audio_codec
-- espressif/esp_audio_effects
 - idf
 - lvgl/lvgl
-manifest_hash: 41676ef271778caf97833bede199ccdc4e8afd2f1645bc40c9b1c9e7534d8e5a
+manifest_hash: 35f1c36ce0bf55a9db97afe4e3d6ffb18eab151461505e919b00e9cf6cf9f05c
 target: esp32s3
 version: 2.0.0

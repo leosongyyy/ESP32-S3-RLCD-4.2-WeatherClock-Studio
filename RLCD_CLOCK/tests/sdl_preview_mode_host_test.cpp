@@ -16,8 +16,8 @@ int main()
     assert(sdl_preview_mode::selection_for("history").history);
     assert(sdl_preview_mode::selection_for("gallery").gallery);
     assert(sdl_preview_mode::selection_for("flip_clock").flip_clock);
-    assert(sdl_preview_mode::selection_for("xiaozhi").xiaozhi);
-    assert(sdl_preview_mode::selection_for("xiaozhi_preparing").xiaozhi);
+    assert(sdl_preview_mode::selection_for("game").game);
+    assert(sdl_preview_mode::selection_for("game_paused").game);
     assert(sdl_preview_mode::selection_for("calendar").calendar);
     assert(sdl_preview_mode::selection_for("weather_board").weather_board);
     assert(sdl_preview_mode::selection_for("info").info);

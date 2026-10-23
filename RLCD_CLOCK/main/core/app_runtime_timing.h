@@ -6,7 +6,6 @@ inline constexpr int kAppSecondsPerMinute = 60;
 inline constexpr int kAppMsPerMinute = kAppSecondsPerMinute * kAppMsPerSecond;
 
 inline constexpr int kSettingsTimeoutMs = 30 * kAppMsPerSecond;
-inline constexpr int kXiaozhiAutoReturnTimeoutMs = 5 * kAppMsPerMinute;
 inline constexpr int kSettingsManualSyncTimeoutMs = kAppMsPerMinute;
 
 inline constexpr int kWeatherClockAutoRetryMs = 2 * kAppMsPerMinute;
@@ -19,8 +18,8 @@ static_assert(kAppMsPerMinute == 60000,
               "application minute conversion must remain stable");
 static_assert(kSettingsTimeoutMs > 0 && kSettingsManualSyncTimeoutMs > 0,
               "settings timeouts must be positive");
-static_assert(kXiaozhiAutoReturnTimeoutMs > kSettingsTimeoutMs,
-              "Xiaozhi auto-return must exceed settings inactivity timeout");
+static_assert(kSettingsManualSyncTimeoutMs > kSettingsTimeoutMs,
+              "manual sync timeout must exceed settings inactivity timeout");
 static_assert(kWeatherClockAutoRetryMs > 0 &&
                   kWeatherClockAutoSyncMaxAttempts > 0 &&
                   kWeatherClockAutoBackoffMs > kWeatherClockAutoRetryMs,

@@ -7,6 +7,7 @@
 #include "driver/i2s_tdm.h"
 #include "driver/i2s_pdm.h"
 #include "soc/soc_caps.h"
+#include "esp_heap_caps.h"
 #else
 #include "driver/i2s.h"
 #endif
@@ -173,11 +174,19 @@ static int _i2s_init(uint8_t port, esp_codec_dev_type_t dev_type, codec_init_cfg
     if (input == false && output == false) {
         return 0;
     }
-    // 小智双向会话恢复 16 kHz 下约 90 ms 的 DMA 容量以容忍调度抖动。
-    // 普通提示音仍使用紧凑 TX，保护配网首屏的连续内部内存余量。
-    const bool duplex = output && input;
-    chan_cfg.dma_desc_num = duplex ? 6 : 3;
-    chan_cfg.dma_frame_num = duplex ? 240 : 64;
+    // DMA 容量 = 播出存货上限：调度抖动超过这个时长，I2S 播空就出咔哒声。
+    //
+    // 原来 TX-only 用紧凑的 3×64 帧（32kHz stereo 下仅 6ms）以省配网首屏的
+    // 内部内存，但那是在「只有提示音需要播」的前提下定的。GB 游戏音频任务
+    // 跑在 core 0 优先级 8，而 ESP-IDF 的 WiFi/TCP 系统任务是 18-23 级，
+    // 游戏期间 WiFi 在线，一次 TCP 突发就能把音频任务挡下 6ms 以上。
+    // 6×240 帧给到 45ms 容忍度，且这组配置正是双向会话路径在同硬件上
+    // 已验证过的值。
+    //
+    // 代价是多占约 5KB 内部 RAM，且分配发生在首次开 codec 时（配网首屏播
+    // 提示音就会触发），所以下面打点实测——最大连续块掉到 40KB 以下就回退。
+    chan_cfg.dma_desc_num = 6;
+    chan_cfg.dma_frame_num = 240;
 #ifdef SOC_I2S_SUPPORTS_TDM
     i2s_tdm_slot_mask_t slot_mask = I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3;
     i2s_tdm_config_t tdm_cfg = {
@@ -196,8 +205,25 @@ static int _i2s_init(uint8_t port, esp_codec_dev_type_t dev_type, codec_init_cfg
     tdm_cfg.slot_cfg.total_slot = 4;
 #endif
     chan_cfg.id = I2S_NUM_AUTO; // Use auto ID
+    // DMA 缓冲由 i2s_new_channel 从内部 RAM 分配。加深到 6×240 后这里多占
+    // 约 5KB，而首次开 codec 恰好发生在配网首屏播提示音时（正是当初选紧凑
+    // TX 想保护的场景），所以实测两个指标：总量余量与最大连续块。
+    // 判据：最大连续块低于 40KB 就该回退到 3×64——宁可偶尔咔哒，
+    // 也不能让配网首屏 OOM。
+    const size_t ram_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t block_before = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     int ret = i2s_new_channel(&chan_cfg, output == false ? NULL : &i2s_keep[port]->tx_handle,
                               input == false ? NULL : &i2s_keep[port]->rx_handle);
+    ESP_LOGI(TAG,
+             "i2s dma %ux%u frames: internal ram free %u->%u (delta %d), "
+             "largest block %u->%u",
+             (unsigned)chan_cfg.dma_desc_num,
+             (unsigned)chan_cfg.dma_frame_num,
+             (unsigned)ram_before,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (int)((long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) - (long)ram_before),
+             (unsigned)block_before,
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     ESP_LOGI(TAG, "tx:%p rx:%p", i2s_keep[port]->tx_handle, i2s_keep[port]->rx_handle);
     if (i2s_keep[port]->tx_handle) {
         if (init_cfg->out_mode == CODEC_I2S_MODE_STD) {

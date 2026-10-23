@@ -33,7 +33,7 @@ static_assert(kSettingsOrderExitFeedbackMs > 0, "settings order exit feedback du
 static_assert(kSettingsOrderExitSavedFeedback[0] != '\0', "settings order saved feedback must not be empty");
 static_assert(clamp_selection_to_count(kWorkPageCalendar, kWorkPageCount) == kWorkPageCalendar &&
                   clamp_selection_to_count(kWorkPageHistory, kWorkPageCount) == kWorkPageHistory &&
-                  clamp_selection_to_count(kWorkPageXiaozhiAI, kWorkPageCount) == kWorkPageXiaozhiAI,
+                  clamp_selection_to_count(kWorkPageGameBoy, kWorkPageCount) == kWorkPageGameBoy,
               "high work page indices must remain selectable in page toggle mode");
 static_assert(kSettingsPrimaryCount <= 256 && kSettingsSecondaryMaxCount <= 256 &&
                   kWorkPageCount <= 256,

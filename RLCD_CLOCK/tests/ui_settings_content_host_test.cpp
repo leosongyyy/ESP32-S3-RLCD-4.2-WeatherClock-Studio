@@ -47,10 +47,10 @@ int custom_assets_gallery_count()
 
 int main()
 {
-    static_assert(kDisplaySettingsXiaozhiAutoReturnItem == 2,
-                  "Xiaozhi power saving must use the left cell of the second row");
-    static_assert(kDisplaySettingsAlarmItem == 3,
-                  "alarm must use the right cell of the second row");
+    static_assert(kDisplaySettingsAlarmItem == 2,
+                  "alarm must use the left cell of the second row");
+    static_assert(kDisplaySettingsGalleryRotationItem == 3,
+                  "gallery rotation must use the right cell of the second row");
     SettingsSecondaryStateSnapshot state = {};
     state.volume_percent = 60;
     state.sound_index = 2;
@@ -83,7 +83,6 @@ int main()
     populate_settings_secondary_items(kSettingsPrimaryDisplay, state, items);
     expect_text(items, kDisplaySettingsPageSwitchItem, "页面开关");
     expect_text(items, kDisplaySettingsOrderItem, "页面顺序");
-    expect_text(items, kDisplaySettingsXiaozhiAutoReturnItem, "小智节能");
     expect_text(items, kDisplaySettingsAlarmItem, "闹钟 --:--");
     expect_text(items, kDisplaySettingsGalleryRotationItem, "图片切换 24h");
 

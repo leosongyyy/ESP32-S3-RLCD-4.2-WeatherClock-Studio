@@ -28,10 +28,11 @@
 #include "sdl_preview_weather.h"
 #include "sdl_preview_widgets.h"
 #include "sdl_preview_work_status.h"
-#include "sdl_preview_xiaozhi.h"
+#include "ui_fonts.h"
 #include "ui_work_page_layout.h"
 
 using sdl_preview_widgets::make_black_bar;
+using sdl_preview_widgets::make_label;
 using sdl_preview_widgets::make_label_with_font;
 
 static constexpr int kDisplayWidth = 400;
@@ -217,7 +218,7 @@ static void build_aggregate_clock_preview_ui()
     }
 }
 
-static void build_xiaozhi_preview_ui(const char *preview_mode, const XiaozhiPreviewMode *override_mode = nullptr)
+static void build_game_preview_ui()
 {
     lv_obj_t *screen = lv_scr_act();
     lv_obj_clean(screen);
@@ -227,8 +228,7 @@ static void build_xiaozhi_preview_ui(const char *preview_mode, const XiaozhiPrev
     time_t now = preview_time();
     struct tm local = {};
     localtime_r(&now, &local);
-    XiaozhiPreviewMode mode = override_mode ? *override_mode : classify_xiaozhi_preview_mode(preview_mode);
-    g_work_status.build(screen, local, mode.pomodoro_visible(), true);
+    g_work_status.build(screen, local, false, true);
 
     make_black_bar(
         screen,
@@ -237,7 +237,12 @@ static void build_xiaozhi_preview_ui(const char *preview_mode, const XiaozhiPrev
         ui_work_page_layout::kTopSeparatorWidth,
         ui_work_page_layout::kTopSeparatorHeight);
     g_work_page_day_progress.build_day(screen, local, 59);
-    build_xiaozhi_preview_body(screen, &local, mode);
+
+    lv_obj_t *title = make_label_with_font(
+        screen, 0, 106, kDisplayWidth, 40, "游戏", &zh_pomodoro_title_24);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_t *hint = make_label(screen, 0, 160, kDisplayWidth, 28, "ROM 未安装");
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 }
 
 static void build_info_preview_ui()
@@ -335,8 +340,8 @@ static sdl_preview_mode::Selection build_selected_preview(const char *preview_mo
         build_aggregate_clock_preview_ui();
     } else if (selection.flip_clock) {
         build_flip_clock_preview_ui();
-    } else if (selection.xiaozhi) {
-        build_xiaozhi_preview_ui(preview_mode);
+    } else if (selection.game) {
+        build_game_preview_ui();
     } else if (selection.calendar) {
         build_calendar_preview_ui();
     } else if (selection.weather_board) {
@@ -425,7 +430,7 @@ static void run_interactive_preview()
 static WebDemoState g_demo;
 static double g_demo_now = 0;
 static time_t g_demo_second = -1;
-static const char *kDemoModes[] = {"main","gallery","weather_board","flip_clock","calendar","history","xiaozhi","aggregate_clock"};
+static const char *kDemoModes[] = {"main","gallery","weather_board","flip_clock","calendar","history","game","aggregate_clock"};
 
 static void render_web_demo()
 {
@@ -454,16 +459,8 @@ static void render_web_demo()
         if (weather_theme) setenv("WEATHER_CLOCK_SDL_WEATHER_THEME", weather_theme, 1);
         else unsetenv("WEATHER_CLOCK_SDL_WEATHER_THEME");
         const char *mode=kDemoModes[g_demo.page];
-        if(g_demo.page==6) {
-            auto xi=classify_xiaozhi_preview_mode("xiaozhi");
-            xi.pomodoro_running=g_demo.pomodoro_until>0;
-            xi.pomodoro_completed=g_demo.pomodoro_completed;
-            xi.remaining_seconds=xi.pomodoro_running?static_cast<int>((g_demo.pomodoro_until-g_demo_now+999)/1000):0;
-            const char *states[]={"待命（模拟）","聆听中（模拟）","思考中（模拟）","正在说话（模拟）"};
-            const char *messages[]={"你好，今天也要保持好心情。","正在接收演示对话...","正在准备演示回复...","当地今天多云，适合散步。记得带好饮用水。"};
-            xi.status=states[g_demo.conversation];xi.subtitle=messages[g_demo.conversation];
-            build_xiaozhi_preview_ui(mode,&xi);
-        } else build_selected_preview(mode);
+        if(g_demo.page==6) build_game_preview_ui();
+        else build_selected_preview(mode);
         if(g_demo.page==0) {
             struct tm local={};localtime_r(&g_web_time,&local);g_clock.update_time(local);
         }

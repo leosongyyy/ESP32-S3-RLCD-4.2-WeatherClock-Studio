@@ -65,8 +65,7 @@ bool page_is_enabled(int page, uint8_t page_mask_value)
 bool mask_has_valid_home(uint8_t page_mask_value)
 {
     for (int page = kWorkPageWeatherClock; page < kWorkPageCount; ++page) {
-        if (page != kWorkPageXiaozhiAI &&
-            (page_mask_value & page_mask(page)) != 0) {
+        if ((page_mask_value & page_mask(page)) != 0) {
             return true;
         }
     }
@@ -82,8 +81,7 @@ bool order_has_valid_home(const uint8_t *order,
     }
     const int first_enabled =
         first_enabled_index(order, order_size, page_mask_value);
-    return index_found(first_enabled) &&
-           order[first_enabled] != kWorkPageXiaozhiAI;
+    return index_found(first_enabled);
 }
 
 bool swap_entries_preserving_home(uint8_t *order,
@@ -179,20 +177,6 @@ bool normalize(uint8_t *order,
     }
     if (!order_is_valid(order, order_size)) {
         memcpy(order, default_order, order_size);
-    }
-    int first_enabled = first_enabled_index(order, order_size, page_mask_value);
-    if (!index_found(first_enabled) ||
-        order[first_enabled] != kWorkPageXiaozhiAI) {
-        return true;
-    }
-    for (int i = first_enabled + 1; i < kWorkPageCount; ++i) {
-        if (page_is_enabled(order[i], page_mask_value) &&
-            order[i] != kWorkPageXiaozhiAI) {
-            uint8_t replacement = order[i];
-            order[i] = order[first_enabled];
-            order[first_enabled] = replacement;
-            break;
-        }
     }
     return true;
 }

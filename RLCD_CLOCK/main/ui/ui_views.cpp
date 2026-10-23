@@ -29,6 +29,7 @@
 #include "ui_aux_pages.h"
 #include "ui_settings_page.h"
 #include "ui_draw_cache.h"
+#include "ui_game.h"
 #include "ui_info_page_state_internal.h"
 #include "ui_loop_schedule.h"
 #include "ui_runtime_schedule.h"
@@ -42,7 +43,6 @@
 #include "ui_work_page_update.h"
 #include "weather_state.h"
 #include "wifi_radio_state.h"
-#include "xiaozhi_ai.h"
 
 #include <esp_log.h>
 #include <stdint.h>
@@ -102,22 +102,6 @@ void show_settings_aux_page(VisibleAuxiliaryPage &visible_auxiliary_page)
     visible_auxiliary_page = VisibleAuxiliaryPage::kSettings;
 }
 
-void apply_xiaozhi_page_activation(bool requested_active,
-                                   bool allow_active_retry,
-                                   bool &previous_requested_active,
-                                   bool &previous_valid)
-{
-    if (!ui_xiaozhi_activation_update_due(requested_active,
-                                          previous_requested_active,
-                                          previous_valid,
-                                          allow_active_retry)) {
-        return;
-    }
-    xiaozhi_ai_set_page_active(requested_active);
-    previous_requested_active = requested_active;
-    previous_valid = true;
-}
-
 } // namespace
 
 void ui_task(void *)
@@ -144,15 +128,11 @@ void ui_task(void *)
     bool weather_cache_status_valid = false;
     DailySayingCacheSnapshot saying_cache_status;
     bool saying_cache_status_valid = false;
-    TickType_t xiaozhi_last_activity_tick = 0;
-    uint32_t last_xiaozhi_activity_sequence = 0;
     BatteryRuntimeSnapshot battery = {};
     bool battery_snapshot_valid = false;
     time_t cached_local_second = 0;
     struct tm cached_local = {};
     bool cached_local_valid = false;
-    bool xiaozhi_activation_requested = false;
-    bool xiaozhi_activation_request_valid = false;
     int low_battery_resume_page = kWorkPageWeatherClock;
     bool low_battery_resume_pending = false;
     uint8_t lvgl_lock_failures = 0;
@@ -160,6 +140,12 @@ void ui_task(void *)
 
     for (;;) {
         runtime_health_record_current_task_stack(RegularAppTaskId::kUi);
+        // 逃生守卫：低电量 / OTA / 配网页 / 等待重启时停掉模拟器。
+        // 必须在这里（拿 LVGL 锁之前、所有 continue 之前）无条件跑一次：
+        // 低电量与配网页激活会把工作页强切到天气钟并让 state.game=false，
+        // update_game_page() 那条路径根本不会被执行。
+        // 本函数不碰 LVGL，也不持锁调 gameboy_runtime_stop()（它最长等 2s）。
+        game_page_guard_runtime_stop();
         time_t now;
         time(&now);
         if (ui_local_time_cache_refresh_due(now,
@@ -188,20 +174,8 @@ void ui_task(void *)
             ensure_active_work_page_enabled();
         }
         int active_page = active_work_page_load();
-        apply_xiaozhi_page_activation(
-            active_page == kWorkPageXiaozhiAI &&
-                !battery.low_battery_mode &&
-                !runtime_surfaces.setup_portal_active &&
-                !runtime_surfaces.auxiliary_page_requested(),
-            true,
-            xiaozhi_activation_requested,
-            xiaozhi_activation_request_valid);
 
         TickType_t tick_now = xTaskGetTickCount();
-        if (active_page == kWorkPageXiaozhiAI &&
-            runtime_surfaces.auxiliary_page_requested()) {
-            xiaozhi_last_activity_tick = tick_now;
-        }
         uint32_t weather_network_bits = 0;
         if (ui_weather_network_status_required(
                 active_page == kWorkPageWeatherClock,
@@ -257,7 +231,10 @@ void ui_task(void *)
         const bool lvgl_locked = Lvgl_lock(kUiLvglLockTimeoutMs);
         if (lvgl_locked) {
             lvgl_lock_failures = 0;
-            bool refresh_now = false;
+            // 把守卫攒下的退出理由画出去（游戏页提示行 + lv_layer_top 横幅），
+            // 顺便处理横幅自动消失。必须在锁内。
+            const bool guard_changed = game_page_guard_tick_ui();
+            bool refresh_now = guard_changed;
             bool info_requested = runtime_surfaces.info_requested;
             InfoPageStateSnapshot info_state = {};
             OtaRuntimeTimingSnapshot info_ota = {};
@@ -565,25 +542,9 @@ void ui_task(void *)
                 }
             }
             active_page = active_work_page_load();
-            ui_runtime_update_xiaozhi_auto_return(
-                active_page,
-                battery.low_battery_mode,
-                runtime_surfaces,
-                tick_now,
-                xiaozhi_last_activity_tick,
-                last_xiaozhi_activity_sequence);
-            active_page = active_work_page_load();
             if (visible_work_page != active_page) {
                 show_active_work_page();
                 visible_work_page = active_page;
-                apply_xiaozhi_page_activation(
-                    visible_work_page == kWorkPageXiaozhiAI &&
-                        !battery.low_battery_mode &&
-                        !runtime_surfaces.setup_portal_active &&
-                        !runtime_surfaces.auxiliary_page_requested(),
-                    false,
-                    xiaozhi_activation_requested,
-                    xiaozhi_activation_request_valid);
                 status_due = true;
                 sensor_status_due = true;
                 battery_due = true;

@@ -31,7 +31,6 @@ constexpr const char *kSettingsPageSwitchText = "页面开关";
 constexpr const char *kSettingsPageOrderText = "页面顺序";
 constexpr const char *kSettingsAlarmOffText = "闹钟 --:--";
 constexpr const char *kSettingsAlarmOnFormat = "闹钟 %02d:%02d";
-constexpr const char *kSettingsXiaozhiAutoReturnText = "小智节能";
 constexpr const char *kSettingsGalleryRotationFormat = "图片切换 %s";
 constexpr const char *kSettingsOfflineFormat = "离线模式 %s";
 constexpr const char *kSettingsOfflineOnText = "开";
@@ -133,15 +132,11 @@ void populate_settings_secondary_items(
                                kDisplaySettingsAlarmItem,
                                kSettingsAlarmOffText);
         }
-        set_secondary_text(secondary_items,
-                           kDisplaySettingsXiaozhiAutoReturnItem,
-                           kSettingsXiaozhiAutoReturnText);
-        format_secondary_text(
-            secondary_items,
-            kDisplaySettingsGalleryRotationItem,
-            kSettingsGalleryRotationFormat,
-            effective_gallery_rotation_label(gallery_rotation_period_load(),
-                                             custom_assets_gallery_count()));
+        format_secondary_text(secondary_items,
+                              kDisplaySettingsGalleryRotationItem,
+                              kSettingsGalleryRotationFormat,
+                              effective_gallery_rotation_label(gallery_rotation_period_load(),
+                                                               custom_assets_gallery_count()));
     } else {
         format_secondary_text(secondary_items,
                               kSystemSettingsOfflineItem,

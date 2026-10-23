@@ -36,10 +36,6 @@ bool ui_low_refresh_page_minute_idle(bool page_uses_low_refresh,
                                      bool low_battery_mode,
                                      bool setup_portal_active,
                                      bool auxiliary_page_requested);
-bool ui_xiaozhi_activation_update_due(bool requested_active,
-                                      bool previous_requested_active,
-                                      bool previous_valid,
-                                      bool allow_active_retry);
 uint32_t ui_next_minute_delay_ms(int64_t sampled_wall_second,
                                  int64_t wall_clock_us);
 uint32_t ui_pomodoro_boundary_delay_ms(uint32_t boundary_ms);

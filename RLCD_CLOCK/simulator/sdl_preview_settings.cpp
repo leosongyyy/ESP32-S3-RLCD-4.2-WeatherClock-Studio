@@ -153,7 +153,7 @@ void build_settings_preview_page(const char *mode)
     if (settings_preview_mode_is(mode, "settings_order")) {
         static const char *order_items[] = {
             "1 天气时钟", "2 图片时钟", "3 天气看板",
-            "4 温湿时钟", "5 日历", "6 温湿历史", "7 小智AI", "8 聚合时钟",
+            "4 温湿时钟", "5 日历", "6 温湿历史", "7 游戏", "8 聚合时钟",
         };
         for (int i = 0; i < 8; ++i) {
             settings_layout::GridCell cell = settings_layout::settings_grid_cell(i);
@@ -194,7 +194,7 @@ void build_settings_preview_page(const char *mode)
     } else if (settings_preview_mode_is(mode, "settings_pages")) {
         static const char *display_items[] = {
             "天气时钟", "图片时钟", "天气看板",
-            "温湿时钟", "日历", "温湿历史", "小智AI", "聚合时钟",
+            "温湿时钟", "日历", "温湿历史", "游戏", "聚合时钟",
         };
         for (int i = 0; i < 8; ++i) {
             settings_layout::GridCell cell = settings_layout::settings_grid_cell(i);
@@ -203,28 +203,22 @@ void build_settings_preview_page(const char *mode)
         feedback_label = make_label(screen, 24, 246, 352, 20, "页面可开关，也可排序");
     } else if (primary == 2) {
         static const char *display_items[] = {
-            "页面开关", "页面顺序", "小智节能", "闹钟 07:30", "图片切换 6h",
+            "页面开关", "页面顺序", "闹钟 07:30", "图片切换 6h",
         };
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 4; ++i) {
             settings_layout::GridCell cell = settings_layout::settings_grid_cell(i);
             make_settings_grid_item(screen,
                                     cell.x,
                                     cell.y,
                                     display_items[i],
-                                    i == 4,
+                                    i == 3,
                                     nullptr,
-                                    i == 3);
+                                    i == 2);
         }
-        settings_layout::GridCell auto_return_cell = settings_layout::settings_grid_cell(2);
-        settings_layout::GridCell alarm_cell = settings_layout::settings_grid_cell(3);
+        settings_layout::GridCell alarm_cell = settings_layout::settings_grid_cell(2);
         make_settings_switch_dot(screen,
                                  alarm_cell.x + settings_layout::kSettingsGridSwitchDotXOffset,
                                  alarm_cell.y + settings_layout::kSettingsGridSwitchDotYOffset,
-                                 true,
-                                 false);
-        make_settings_switch_dot(screen,
-                                 auto_return_cell.x + settings_layout::kSettingsGridSwitchDotXOffset,
-                                 auto_return_cell.y + settings_layout::kSettingsGridSwitchDotYOffset,
                                  true,
                                  false);
         feedback_label = make_label(screen, 24, 246, 352, 20, "仅自定义图片可调整切换时间");
@@ -277,7 +271,7 @@ void build_web_settings_page(const WebDemoState &state, const char *version)
     make_black_bar(screen,24,52,352,3); make_black_bar(screen,136,62,2,174);
     const char *primary[]={"网络","声音","显示","系统"};
     for(int i=0;i<4;++i) make_settings_item(screen,settings_layout::kSettingsPrimaryX,settings_layout::kSettingsListRowY[i],settings_layout::kSettingsPrimaryW,settings_layout::kSettingsSecondaryH,primary[i],i==state.primary);
-    const char *pages[]={"天气时钟","图片时钟","天气看板","温湿时钟","日历","温湿历史","小智AI","聚合时钟"};
+    const char *pages[]={"天气时钟","图片时钟","天气看板","温湿时钟","日历","温湿历史","游戏","聚合时钟"};
     char items[8][96]{};
     int count=state.count();
     bool grid=state.primary>=2||state.scene==WebDemoState::Pages||state.scene==WebDemoState::Order;
@@ -295,9 +289,8 @@ void build_web_settings_page(const WebDemoState &state, const char *version)
         std::snprintf(items[3],96,"全天提醒 %s",state.all_day?"开":"关");
     } else if(state.primary==2) {
         std::snprintf(items[0],96,"页面开关");std::snprintf(items[1],96,"页面顺序");
-        std::snprintf(items[2],96,"小智节能 %s",state.auto_return?"开":"关");
-        std::snprintf(items[3],96,"闹钟 %s",state.alarm?"07:30":"关");
-        std::snprintf(items[4],96,"图片切换 24h");
+        std::snprintf(items[2],96,"闹钟 %s",state.alarm?"07:30":"关");
+        std::snprintf(items[3],96,"图片切换 24h");
     } else {
         std::snprintf(items[0],96,"离线模式 %s",state.offline?"开":"关");
         std::snprintf(items[1],96,"网络检测");std::snprintf(items[2],96,"恢复出厂设置");

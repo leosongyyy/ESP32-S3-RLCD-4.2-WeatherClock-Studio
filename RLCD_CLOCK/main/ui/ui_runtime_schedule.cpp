@@ -1,4 +1,4 @@
-// 编排 UI 运行期超时、辅助页门控、唤醒间隔和小智自动返回。
+// 编排 UI 运行期超时、辅助页门控和唤醒间隔。
 #include "ui_runtime_schedule.h"
 
 #include "active_work_page_state_internal.h"
@@ -7,16 +7,11 @@
 #include "app_tick_time.h"
 #include "battery_runtime_state.h"
 #include "network_diagnostics_state.h"
-#include "pomodoro_services.h"
 #include "sensor_time.h"
 #include "ui_info_page_state.h"
 #include "ui_loop_schedule.h"
 #include "ui_settings_activity_state.h"
 #include "ui_work_page_catalog.h"
-#include "ui_xiaozhi_auto_return.h"
-#include "ui_xiaozhi.h"
-#include "xiaozhi_ai.h"
-#include "xiaozhi_auto_return_state.h"
 #include "wifi_portal_state.h"
 
 #include <esp_log.h>
@@ -25,8 +20,6 @@
 #include <sys/time.h>
 
 namespace {
-
-#define UI_XIAOZHI_AUTO_RETURN_LOG "Xiaozhi idle timeout, returning to home page=%d"
 
 constexpr int64_t kUiRuntimeUsPerSecond = 1000000LL;
 
@@ -105,74 +98,14 @@ TickType_t ui_runtime_next_loop_delay_ticks(time_t sampled_wall_second,
         (!minute_level_wait || battery_blink_visible)
             ? next_second_delay_ticks(sampled_wall_second)
             : 0;
-    uint32_t delay_candidates[4] = {};
+    uint32_t delay_candidates[2] = {};
     delay_candidates[0] = minute_level_wait
                               ? next_minute_delay_ticks(sampled_wall_second)
                               : second_delay_ticks;
-    if (active_page == kWorkPageXiaozhiAI &&
-        !battery.low_battery_mode &&
-        !surfaces.setup_portal_active &&
-        !surfaces.auxiliary_page_requested()) {
-        if (pomodoro_is_running()) {
-            PomodoroSnapshot pomodoro = {};
-            pomodoro_get_snapshot(&pomodoro);
-            uint32_t boundary_ms = pomodoro_next_display_boundary_ms(
-                pomodoro.remaining_ms);
-            if (boundary_ms > 0) {
-                delay_candidates[1] = app_tick_nonzero_delay(
-                    pdMS_TO_TICKS(ui_pomodoro_boundary_delay_ms(boundary_ms)));
-            }
-        }
-        uint32_t subtitle_delay_ms = xiaozhi_subtitle_animation_delay_ms();
-        if (subtitle_delay_ms > 0) {
-            delay_candidates[2] = app_tick_nonzero_delay(
-                pdMS_TO_TICKS(subtitle_delay_ms));
-        }
-    }
     if (battery_blink_visible) {
-        delay_candidates[3] = second_delay_ticks;
+        delay_candidates[1] = second_delay_ticks;
     }
     return static_cast<TickType_t>(ui_shortest_delay_ticks(
         delay_candidates,
         sizeof(delay_candidates) / sizeof(delay_candidates[0])));
-}
-
-void ui_runtime_update_xiaozhi_auto_return(int active_page,
-                                           bool low_battery_mode,
-                                           const UiRuntimeSurfaceSnapshot &surfaces,
-                                           TickType_t tick_now,
-                                           TickType_t &last_activity_tick,
-                                           uint32_t &last_activity_sequence)
-{
-    if (active_page == kWorkPageXiaozhiAI &&
-        !low_battery_mode &&
-        !surfaces.setup_portal_active &&
-        !surfaces.auxiliary_page_requested()) {
-        const XiaozhiActivitySnapshot snapshot =
-            xiaozhi_ai_activity_snapshot_load();
-        bool conversation_active = snapshot.state == kXiaozhiAiListening ||
-                                   snapshot.state == kXiaozhiAiSpeaking;
-        XiaozhiAutoReturnDecision auto_return = xiaozhi_auto_return_decision(
-            tick_now,
-            last_activity_tick,
-            pdMS_TO_TICKS(kXiaozhiAutoReturnTimeoutMs),
-            xiaozhi_auto_return_enabled_load(),
-            pomodoro_is_running(),
-            conversation_active,
-            snapshot.activity_sequence != last_activity_sequence);
-        if (auto_return.record_activity) {
-            last_activity_tick = tick_now;
-            last_activity_sequence = snapshot.activity_sequence;
-        } else if (auto_return.return_home) {
-            int home_page = first_enabled_work_page();
-            if (home_page != kWorkPageXiaozhiAI) {
-                ESP_LOGI(TAG, UI_XIAOZHI_AUTO_RETURN_LOG, home_page);
-                active_work_page_store(home_page);
-            }
-            last_activity_tick = tick_now;
-        }
-    } else if (active_page != kWorkPageXiaozhiAI) {
-        last_activity_tick = 0;
-        last_activity_sequence = 0;
-    }
 }

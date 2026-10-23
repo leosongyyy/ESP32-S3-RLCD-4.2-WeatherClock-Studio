@@ -25,7 +25,6 @@ using network_config_keys::kWifiBackupSsidKey;
 using network_config_keys::kWifiPassKey;
 using network_config_keys::kWifiPreferredSlotKey;
 using network_config_keys::kWifiSsidKey;
-using network_config_keys::kXiaozhiAutoReturnKey;
 using network_config_keys::kGalleryRotationKey;
 using network_page_storage::kPageMaskV1Key;
 using network_page_storage::kPageMaskV2Key;
@@ -73,11 +72,10 @@ constexpr const char *kSavedConfigKeys[] = {
     kPageOrderV4Key,
     kPageOrderV5Key,
     kPageOrderV6Key,
-    kXiaozhiAutoReturnKey,
     kGalleryRotationKey,
 };
 
-static_assert(array_count(kSavedConfigKeys) == 29,
+static_assert(array_count(kSavedConfigKeys) == 28,
               "factory reset key registry count changed; update its host test");
 static_assert(cstr_array_nonempty(kSavedConfigKeys),
               "factory reset config keys must be non-empty");
@@ -115,8 +113,6 @@ static_assert(cstr_array_contains(kSavedConfigKeys, kPageMaskV5Key),
               "factory reset must clear current page mask");
 static_assert(cstr_array_contains(kSavedConfigKeys, kPageOrderV5Key),
               "factory reset must clear current page order");
-static_assert(cstr_array_contains(kSavedConfigKeys, kXiaozhiAutoReturnKey),
-              "factory reset must clear Xiaozhi auto-return setting");
 static_assert(cstr_array_contains(kSavedConfigKeys, kGalleryRotationKey),
               "factory reset must clear gallery rotation setting");
 } // namespace

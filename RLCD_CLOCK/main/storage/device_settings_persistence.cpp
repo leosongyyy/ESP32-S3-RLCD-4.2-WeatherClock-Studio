@@ -10,7 +10,6 @@
 #include "ui_gallery_rotation_state_internal.h"
 #include "ui_work_page_catalog_internal.h"
 #include "ui_work_page_order_policy.h"
-#include "xiaozhi_auto_return_state_internal.h"
 
 #include <esp_log.h>
 
@@ -19,17 +18,14 @@ using network_config_nvs::ScopedNvsHandle;
 using network_config_nvs::write_changed_nvs_u8;
 using network_page_storage::kPageMaskV6Key;
 using network_page_storage::write_work_page_order_nvs;
-using network_config_keys::kXiaozhiAutoReturnKey;
 using network_config_keys::kGalleryRotationKey;
 
 namespace {
 constexpr const char *kNvsActionSavingHourlyReminder = "saving hourly reminder";
 constexpr const char *kNvsActionSavingPageSettings = "saving page settings";
 constexpr const char *kNvsActionSavingPageOrder = "saving page order";
-constexpr const char *kNvsActionSavingXiaozhiAutoReturn = "saving Xiaozhi auto return";
 constexpr const char *kNvsActionSavingGalleryRotation = "saving gallery rotation";
 constexpr const char *kNvsFailureContextPageSettings = "page settings";
-constexpr const char *kNvsFailureContextXiaozhiAutoReturn = "Xiaozhi auto return";
 constexpr const char *kNvsFailureContextGalleryRotation = "gallery rotation";
 #define NVS_SAVE_HOURLY_REMINDER_FAILED_FORMAT "nvs save hourly reminder failed: %s"
 #define NVS_SAVE_PAGE_ORDER_FAILED_FORMAT "nvs save page order failed: %s"
@@ -113,6 +109,59 @@ bool set_work_page_enabled_mask_setting(uint8_t page_mask)
     return true;
 }
 
+bool ensure_game_page_enabled_once()
+{
+    constexpr const char *kGamePageMigratedKey = "page_game_mig";
+    constexpr const char *kNvsActionMigratingGamePage = "migrating game page";
+    constexpr const char *kNvsFailureContextGamePage = "game page";
+    constexpr uint8_t kGamePageBit =
+        static_cast<uint8_t>(1U << kWorkPageGameBoy);
+
+    ScopedNvsHandle nvs;
+    esp_err_t err = nvs.open(NVS_READWRITE, kNvsActionMigratingGamePage);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    uint8_t already = 0;
+    if (nvs_get_u8(nvs.get(), kGamePageMigratedKey, &already) == ESP_OK &&
+        already != 0) {
+        return true;
+    }
+
+    const uint8_t mask = work_page_enabled_mask_load();
+    bool changed = false;
+
+    if ((mask & kGamePageBit) != 0) {
+        // 已经是开着的，只需要把「迁移过了」记下来。
+        // 不记的话，用户日后关掉游戏页会在下次开机被重新打开。
+        err = write_changed_nvs_u8(nvs.get(), err, kGamePageMigratedKey, 1,
+                                   &changed);
+        err = commit_nvs_if_changed(nvs.get(), err, changed);
+        if (!nvs.close_save_ok(err)) {
+            ESP_LOGW(TAG, NVS_SAVE_U8_SETTING_FAILED_FORMAT,
+                     kNvsFailureContextGamePage, esp_err_to_name(err));
+            return false;
+        }
+        return true;
+    }
+
+    const uint8_t next = static_cast<uint8_t>(mask | kGamePageBit);
+    err = write_changed_nvs_u8(nvs.get(), err, kPageMaskV6Key, next, &changed);
+    err = write_changed_nvs_u8(nvs.get(), err, kGamePageMigratedKey, 1,
+                               &changed);
+    err = commit_nvs_if_changed(nvs.get(), err, changed);
+    if (!nvs.close_save_ok(err)) {
+        ESP_LOGW(TAG, NVS_SAVE_U8_SETTING_FAILED_FORMAT,
+                 kNvsFailureContextGamePage, esp_err_to_name(err));
+        return false;
+    }
+    work_page_enabled_mask_store(normalize_work_page_enabled_mask(next));
+    ESP_LOGI(TAG, "game page enabled by one-time migration: 0x%02x -> 0x%02x",
+             mask, next);
+    return true;
+}
+
 bool set_work_page_order_setting(const uint8_t *page_order,
                                  size_t page_order_size)
 {
@@ -139,18 +188,6 @@ bool set_work_page_order_setting(const uint8_t *page_order,
         return false;
     }
     work_page_order_replace(page_order, page_order_size);
-    return true;
-}
-
-bool set_xiaozhi_auto_return_setting(bool enabled)
-{
-    if (!save_changed_u8_setting(kNvsActionSavingXiaozhiAutoReturn,
-                                 kNvsFailureContextXiaozhiAutoReturn,
-                                 kXiaozhiAutoReturnKey,
-                                 bool_to_nvs_u8(enabled))) {
-        return false;
-    }
-    xiaozhi_auto_return_enabled_store(enabled);
     return true;
 }
 

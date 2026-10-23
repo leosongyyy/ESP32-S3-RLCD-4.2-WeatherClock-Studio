@@ -26,7 +26,7 @@ void expect_default_order()
         kWorkPageFlipClock,
         kWorkPageCalendar,
         kWorkPageHistory,
-        kWorkPageXiaozhiAI,
+        kWorkPageGameBoy,
         kWorkPageAggregateClock,
     };
     uint8_t actual[kWorkPageCount] = {};
@@ -43,7 +43,7 @@ void expect_order_policy_boundaries()
         kWorkPageFlipClock,
         kWorkPageCalendar,
         kWorkPageHistory,
-        kWorkPageXiaozhiAI,
+        kWorkPageGameBoy,
         kWorkPageAggregateClock,
     };
     assert(!work_page_order_policy::order_is_valid(nullptr, kWorkPageCount));
@@ -69,8 +69,8 @@ void expect_order_policy_boundaries()
                                               sizeof(default_order)));
     assert(memcmp(invalid_order, default_order, sizeof(default_order)) == 0);
 
-    uint8_t xiaozhi_first[kWorkPageCount] = {
-        kWorkPageXiaozhiAI,
+    uint8_t game_first[kWorkPageCount] = {
+        kWorkPageGameBoy,
         kWorkPageHistory,
         kWorkPageCalendar,
         kWorkPageFlipClock,
@@ -79,37 +79,37 @@ void expect_order_policy_boundaries()
         kWorkPageWeatherClock,
         kWorkPageAggregateClock,
     };
-    const uint8_t enabled = page_bit(kWorkPageXiaozhiAI) |
+    const uint8_t enabled = page_bit(kWorkPageGameBoy) |
                             page_bit(kWorkPageHistory) |
                             page_bit(kWorkPageCalendar);
-    assert(work_page_order_policy::normalize(xiaozhi_first,
-                                              sizeof(xiaozhi_first),
+    assert(work_page_order_policy::normalize(game_first,
+                                              sizeof(game_first),
                                               enabled,
                                               default_order,
                                               sizeof(default_order)));
-    assert(xiaozhi_first[0] == kWorkPageHistory);
-    assert(xiaozhi_first[1] == kWorkPageXiaozhiAI);
-    assert(work_page_order_policy::first_enabled_index(xiaozhi_first,
-                                                        sizeof(xiaozhi_first),
+    assert(game_first[0] == kWorkPageGameBoy);
+    assert(game_first[1] == kWorkPageHistory);
+    assert(work_page_order_policy::first_enabled_index(game_first,
+                                                        sizeof(game_first),
                                                         enabled) == 0);
-    assert(work_page_order_policy::next_enabled_index(xiaozhi_first,
-                                                       sizeof(xiaozhi_first),
+    assert(work_page_order_policy::next_enabled_index(game_first,
+                                                       sizeof(game_first),
                                                        enabled,
                                                        0) == 1);
-    assert(work_page_order_policy::valid_enabled_index(xiaozhi_first,
-                                                        sizeof(xiaozhi_first),
+    assert(work_page_order_policy::valid_enabled_index(game_first,
+                                                        sizeof(game_first),
                                                         enabled,
                                                         3) == 0);
     assert(work_page_order_policy::mask_has_valid_home(enabled));
-    assert(work_page_order_policy::order_has_valid_home(xiaozhi_first,
-                                                         sizeof(xiaozhi_first),
+    assert(work_page_order_policy::order_has_valid_home(game_first,
+                                                         sizeof(game_first),
                                                          enabled));
-    assert(!work_page_order_policy::mask_has_valid_home(
-        page_bit(kWorkPageXiaozhiAI)));
-    assert(!work_page_order_policy::order_has_valid_home(
-        xiaozhi_first,
-        sizeof(xiaozhi_first),
-        page_bit(kWorkPageXiaozhiAI)));
+    assert(work_page_order_policy::mask_has_valid_home(
+        page_bit(kWorkPageGameBoy)));
+    assert(work_page_order_policy::order_has_valid_home(
+        game_first,
+        sizeof(game_first),
+        page_bit(kWorkPageGameBoy)));
     uint8_t swap_candidate[kWorkPageCount] = {};
     memcpy(swap_candidate, default_order, sizeof(swap_candidate));
     assert(work_page_order_policy::swap_entries_preserving_home(
@@ -127,19 +127,18 @@ void expect_order_policy_boundaries()
         kWorkPageFlipClock,
         kWorkPageCalendar,
         kWorkPageHistory,
-        kWorkPageXiaozhiAI,
+        kWorkPageGameBoy,
         kWorkPageAggregateClock,
     };
     memcpy(swap_candidate, preserved_candidate, sizeof(swap_candidate));
-    assert(!work_page_order_policy::swap_entries_preserving_home(
+    assert(work_page_order_policy::swap_entries_preserving_home(
         swap_candidate,
         sizeof(swap_candidate),
-        page_bit(kWorkPageWeatherClock) | page_bit(kWorkPageXiaozhiAI),
+        page_bit(kWorkPageWeatherClock) | page_bit(kWorkPageGameBoy),
         0,
-        kWorkPageXiaozhiAI));
-    assert(memcmp(swap_candidate,
-                  preserved_candidate,
-                  sizeof(swap_candidate)) == 0);
+        kWorkPageGameBoy));
+    assert(swap_candidate[0] == kWorkPageGameBoy);
+    assert(swap_candidate[kWorkPageGameBoy] == kWorkPageWeatherClock);
     assert(!work_page_order_policy::normalize(invalid_order,
                                                sizeof(invalid_order),
                                                enabled,
@@ -176,7 +175,7 @@ int main()
         "温湿时钟",
         "日历",
         "温湿历史",
-        "小智AI", "聚合时钟",
+        "游戏", "聚合时钟",
     };
     const WorkPageDataRequirements expected_data[kWorkPageCount] = {
         {true, false, false},
@@ -202,7 +201,7 @@ int main()
     assert(work_page_requires_network(kWorkPageWeatherClock));
     assert(work_page_requires_network(kWorkPageGallery));
     assert(work_page_requires_network(kWorkPageWeatherBoard));
-    assert(work_page_requires_network(kWorkPageXiaozhiAI));
+    assert(work_page_requires_network(kWorkPageGameBoy));
     assert(!work_page_requires_network(kWorkPageFlipClock));
     assert(!work_page_requires_network(kWorkPageCalendar));
     assert(!work_page_requires_network(kWorkPageHistory));
@@ -214,7 +213,7 @@ int main()
     assert(!work_page_uses_low_refresh_idle(kWorkPageFlipClock));
     assert(work_page_uses_low_refresh_idle(kWorkPageCalendar));
     assert(work_page_uses_low_refresh_idle(kWorkPageHistory));
-    assert(!work_page_uses_low_refresh_idle(kWorkPageXiaozhiAI));
+    assert(!work_page_uses_low_refresh_idle(kWorkPageGameBoy));
     assert(!work_page_uses_low_refresh_idle(-1));
     assert(!work_page_data_requirements(-1).weather);
     assert(!work_page_data_requirements(-1).extended_weather);
@@ -249,11 +248,11 @@ int main()
     assert(normalize_work_page_enabled_mask(all_pages) == all_pages);
     assert(normalize_work_page_enabled_mask(0) == all_pages);
     assert(normalize_work_page_enabled_mask(0x80) == 0x80);
-    assert(normalize_work_page_enabled_mask(page_bit(kWorkPageXiaozhiAI)) ==
-           (page_bit(kWorkPageWeatherClock) | page_bit(kWorkPageXiaozhiAI)));
+    assert(normalize_work_page_enabled_mask(page_bit(kWorkPageGameBoy)) ==
+           (page_bit(kWorkPageWeatherClock) | page_bit(kWorkPageGameBoy)));
     assert(normalize_work_page_enabled_mask(page_bit(kWorkPageCalendar) |
-                                            page_bit(kWorkPageXiaozhiAI)) ==
-           (page_bit(kWorkPageCalendar) | page_bit(kWorkPageXiaozhiAI)));
+                                            page_bit(kWorkPageGameBoy)) ==
+           (page_bit(kWorkPageCalendar) | page_bit(kWorkPageGameBoy)));
 
     const uint8_t local_pages = page_bit(kWorkPageFlipClock) |
                                 page_bit(kWorkPageCalendar);
@@ -267,8 +266,8 @@ int main()
     assert(work_page_mask_for_offline_mode(page_bit(kWorkPageWeatherClock)) ==
            page_bit(kWorkPageFlipClock));
 
-    const uint8_t xiaozhi_first[kWorkPageCount] = {
-        kWorkPageXiaozhiAI,
+    const uint8_t game_first[kWorkPageCount] = {
+        kWorkPageGameBoy,
         kWorkPageHistory,
         kWorkPageCalendar,
         kWorkPageFlipClock,
@@ -277,14 +276,14 @@ int main()
         kWorkPageWeatherClock,
         kWorkPageAggregateClock,
     };
-    work_page_order_replace(xiaozhi_first, sizeof(xiaozhi_first));
+    work_page_order_replace(game_first, sizeof(game_first));
     uint8_t normalized[kWorkPageCount] = {};
     assert(work_page_order_normalize_and_copy(normalized, sizeof(normalized)));
     assert(normalized[0] == kWorkPageHistory);
-    assert(normalized[1] == kWorkPageXiaozhiAI);
+    assert(normalized[1] == kWorkPageGameBoy);
     assert(first_enabled_work_page() == kWorkPageHistory);
 
-    work_page_enabled_mask_store(page_bit(kWorkPageXiaozhiAI));
+    work_page_enabled_mask_store(page_bit(kWorkPageGameBoy));
     normalize_work_page_order();
     assert(!work_page_mask_has_valid_home(work_page_enabled_mask_load()));
 
@@ -316,7 +315,7 @@ int main()
         kWorkPageFlipClock,
         kWorkPageCalendar,
         kWorkPageHistory,
-        kWorkPageXiaozhiAI,
+        kWorkPageGameBoy,
         kWorkPageAggregateClock,
     };
     const uint8_t alternate_order[kWorkPageCount] = {
@@ -326,7 +325,7 @@ int main()
         kWorkPageWeatherBoard,
         kWorkPageGallery,
         kWorkPageWeatherClock,
-        kWorkPageXiaozhiAI,
+        kWorkPageGameBoy,
         kWorkPageAggregateClock,
     };
     work_page_enabled_mask_store(all_pages);

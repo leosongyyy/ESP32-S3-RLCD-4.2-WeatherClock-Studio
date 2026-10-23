@@ -18,16 +18,4 @@ idf_component_register(
     "pcm/chime_1.pcm"
     "pcm/chime_2.pcm"
     "pcm/chime_3.pcm"
-    "pcm/wifi_prompt.pcm"
-    "pcm/xiaozhi_binding/popup.pcm"
-    "pcm/xiaozhi_binding/prompt.pcm"
-    "pcm/xiaozhi_binding/digit_0.pcm"
-    "pcm/xiaozhi_binding/digit_1.pcm"
-    "pcm/xiaozhi_binding/digit_2.pcm"
-    "pcm/xiaozhi_binding/digit_3.pcm"
-    "pcm/xiaozhi_binding/digit_4.pcm"
-    "pcm/xiaozhi_binding/digit_5.pcm"
-    "pcm/xiaozhi_binding/digit_6.pcm"
-    "pcm/xiaozhi_binding/digit_7.pcm"
-    "pcm/xiaozhi_binding/digit_8.pcm"
-    "pcm/xiaozhi_binding/digit_9.pcm")
+    "pcm/wifi_prompt.pcm")

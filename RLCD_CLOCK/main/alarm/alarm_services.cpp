@@ -1,4 +1,4 @@
-// 实现单个、单次有效的本地闹钟；设置入口由小智 MCP 提供。
+// 实现单个、单次有效的本地闹钟；本阶段只保留响铃与持久化底层能力。
 #include "alarm_services_internal.h"
 
 #include "alarm_replacement_policy.h"
@@ -17,8 +17,6 @@
 #include "sensor_time.h"
 #include "task_notification_target.h"
 #include "ui_task_notify.h"
-#include "xiaozhi_ai.h"
-#include "xiaozhi_mcp.h"
 
 #include <atomic>
 #include <cinttypes>
@@ -35,18 +33,7 @@ constexpr uint32_t kAlarmMaximumRingMs = 60U * 1000U;
 constexpr uint32_t kAlarmRepeatPauseMs = 5U * 1000U;
 constexpr uint32_t kAlarmAudioReleaseWaitMs = 3000U;
 constexpr uint32_t kAlarmAudioReleasePollMs = 20U;
-constexpr uint32_t kAlarmReplaceConfirmationTimeoutMs = 2U * 60U * 1000U;
 constexpr uint8_t kAlarmPendingSaveCatchUpLimit = 3;
-constexpr const char *kAlarmSetResultFormat =
-    "{\"enabled\":true,\"hour\":%d,\"minute\":%d,\"single_use\":true}";
-constexpr const char *kAlarmDisabledResult =
-    "{\"enabled\":false,\"single_use\":true}";
-constexpr const char *kAlarmPomodoroConflictResult =
-    "alarm rejected: active pomodoro ends in the same minute";
-constexpr const char *kAlarmReplaceConfirmationFormat =
-    "{\"confirmation_required\":true,\"existing\":\"%02d:%02d\",\"requested\":\"%02d:%02d\",\"message\":\"已有闹钟，是否覆盖？\"}";
-constexpr const char *kAlarmReplaceConfirmationInvalidResult =
-    "alarm replacement confirmation invalid or expired; ask the user again";
 
 TaskNotificationTarget s_alarm_task_target;
 StaticTaskMutex s_alarm_persistence_mutex;
@@ -54,35 +41,9 @@ std::atomic<bool> s_stop_requested{false};
 std::atomic<bool> s_save_retry_pending{false};
 std::atomic<bool> s_auto_disable_save_pending{false};
 
-bool conflicts_with_running_pomodoro(int hour, int minute)
-{
-    if (!is_system_time_plausible()) {
-        return false;
-    }
-    PomodoroSnapshot pomodoro = {};
-    pomodoro_get_snapshot(&pomodoro);
-    return pomodoro.state == kPomodoroRunning &&
-           reminder_targets_same_local_minute(reminder_wall_clock_ms(),
-                                              hour,
-                                              minute,
-                                              pomodoro.remaining_ms);
-}
-
 void clear_pending_alarm_replacement()
 {
     (void)alarm_runtime_clear_replacement();
-}
-
-AlarmReplacementDecision replacement_decision(const XiaozhiMcpAlarmRequest &request,
-                                                AlarmSnapshot *existing)
-{
-    return alarm_runtime_replacement_decision(
-        request.hour,
-        request.minute,
-        request.confirm_replace,
-        pdTICKS_TO_MS(xTaskGetTickCount()),
-        kAlarmReplaceConfirmationTimeoutMs,
-        existing);
 }
 
 void publish_alarm_state(bool enabled, bool ringing, int hour, int minute)
@@ -246,9 +207,8 @@ bool wait_interruptible(uint32_t delay_ms)
     return !s_stop_requested.load();
 }
 
-void wait_for_xiaozhi_audio_release()
+void wait_for_audio_release()
 {
-    xiaozhi_ai_set_alarm_suspended(true);
     (void)wait_for_audio_playback_idle(kAlarmAudioReleaseWaitMs,
                                        kAlarmAudioReleasePollMs,
                                        alarm_stop_callback);
@@ -291,12 +251,12 @@ void run_alarm_ring()
     AlarmSnapshot snapshot = {};
     alarm_get_snapshot(&snapshot);
     clear_pending_alarm_replacement();
-    // 先关闭运行态，再释放小智音频后写 NVS；避免实时语音期间 Flash 写入。
+    // 先关闭运行态，再等待共享提示音播放结束，避免实时播放期间写 NVS。
     (void)alarm_runtime_pending_save_discard();
     s_save_retry_pending.store(false, std::memory_order_release);
     s_auto_disable_save_pending.store(false, std::memory_order_release);
     publish_alarm_state(false, true, snapshot.hour, snapshot.minute);
-    wait_for_xiaozhi_audio_release();
+    wait_for_audio_release();
     if (!persist_alarm(false, snapshot.hour, snapshot.minute)) {
         ESP_LOGW(TAG, "alarm auto-disable persistence failed");
         s_auto_disable_save_pending.store(true, std::memory_order_release);
@@ -316,7 +276,6 @@ void run_alarm_ring()
             }
         }
     }
-    xiaozhi_ai_set_alarm_suspended(false);
     publish_alarm_state(false, false, snapshot.hour, snapshot.minute);
     if (!flush_alarm_auto_disable_save()) {
         ESP_LOGW(TAG, "alarm deferred auto-disable save failed");
@@ -324,98 +283,6 @@ void run_alarm_ring()
     ESP_LOGI(TAG, "alarm finished stopped=%d", s_stop_requested.load() ? 1 : 0);
 }
 
-bool mcp_set_alarm(const XiaozhiMcpAlarmRequest &request, char *result, size_t result_len)
-{
-    AlarmSnapshot snapshot = {};
-    if (!alarm_time_valid(request.hour, request.minute)) {
-        if (result && result_len > 0) {
-            strlcpy(result, "alarm rejected", result_len);
-        }
-        return false;
-    }
-    alarm_get_snapshot(&snapshot);
-    if (snapshot.ringing) {
-        clear_pending_alarm_replacement();
-        if (result && result_len > 0) {
-            strlcpy(result, "alarm rejected", result_len);
-        }
-        return false;
-    }
-    if (conflicts_with_running_pomodoro(request.hour, request.minute)) {
-        clear_pending_alarm_replacement();
-        ESP_LOGW(TAG, "alarm rejected by active pomodoro minute conflict");
-        if (result && result_len > 0) {
-            strlcpy(result, kAlarmPomodoroConflictResult, result_len);
-        }
-        return false;
-    }
-    AlarmReplacementDecision replace = replacement_decision(request, &snapshot);
-    if (replace == kAlarmReplacementConfirmationRequired) {
-        ESP_LOGI(TAG,
-                 "alarm replacement confirmation requested existing=%02u:%02u requested=%02d:%02d",
-                 static_cast<unsigned>(snapshot.hour),
-                 static_cast<unsigned>(snapshot.minute),
-                 request.hour,
-                 request.minute);
-        if (result && result_len > 0) {
-            snprintf(result,
-                     result_len,
-                     kAlarmReplaceConfirmationFormat,
-                     snapshot.hour,
-                     snapshot.minute,
-                     request.hour,
-                     request.minute);
-        }
-        return false;
-    }
-    if (replace == kAlarmReplacementConfirmationInvalid) {
-        ESP_LOGW(TAG, "alarm replacement confirmation invalid or expired");
-        if (result && result_len > 0) {
-            strlcpy(result, kAlarmReplaceConfirmationInvalidResult, result_len);
-        }
-        return false;
-    }
-    if (snapshot.enabled &&
-        snapshot.hour == request.hour && snapshot.minute == request.minute) {
-        if (result && result_len > 0) {
-            snprintf(result, result_len, kAlarmSetResultFormat, request.hour, request.minute);
-        }
-        return true;
-    }
-    if (snapshot.enabled) {
-        ESP_LOGI(TAG,
-                 "alarm replacement confirmed existing=%02u:%02u requested=%02d:%02d",
-                 static_cast<unsigned>(snapshot.hour),
-                 static_cast<unsigned>(snapshot.minute),
-                 request.hour,
-                 request.minute);
-    }
-    mark_alarm_stop_requested();
-    s_auto_disable_save_pending.store(false, std::memory_order_release);
-    s_save_retry_pending.store(false, std::memory_order_release);
-    publish_alarm_state_for_deferred_save(
-        true, false, request.hour, request.minute);
-    if (result && result_len > 0) {
-        snprintf(result, result_len, kAlarmSetResultFormat, request.hour, request.minute);
-    }
-    return true;
-}
-
-bool mcp_disable_alarm(char *result, size_t result_len)
-{
-    AlarmSnapshot snapshot = {};
-    alarm_get_snapshot(&snapshot);
-    clear_pending_alarm_replacement();
-    mark_alarm_stop_requested();
-    s_auto_disable_save_pending.store(false, std::memory_order_release);
-    s_save_retry_pending.store(false, std::memory_order_release);
-    publish_alarm_state_for_deferred_save(
-        false, false, snapshot.hour, snapshot.minute);
-    if (result && result_len > 0) {
-        strlcpy(result, kAlarmDisabledResult, result_len);
-    }
-    return true;
-}
 } // namespace
 
 bool alarm_services_init()
@@ -425,8 +292,6 @@ bool alarm_services_init()
         return false;
     }
     (void)load_alarm();
-    xiaozhi_mcp_register_alarm_handler(mcp_set_alarm);
-    xiaozhi_mcp_register_alarm_disable_handler(mcp_disable_alarm);
     return true;
 }
 

@@ -25,7 +25,6 @@
 
 #include "audio_services.h"
 #include "ui_task_notify.h"
-#include "xiaozhi_ai.h"
 
 #include <atomic>
 
@@ -75,12 +74,6 @@ constexpr bool should_reconnect_running_station(bool enable_setup_portal,
     return enable_setup_portal || !station_connected;
 }
 
-constexpr bool should_reconfigure_running_power_save(bool enable_setup_portal,
-                                                     bool xiaozhi_keepalive_active)
-{
-    return enable_setup_portal || !xiaozhi_keepalive_active;
-}
-
 constexpr bool station_config_failure_blocks_start(bool enable_setup_portal)
 {
     return !enable_setup_portal;
@@ -111,12 +104,6 @@ static_assert(should_reconnect_running_station(false, false),
               "disconnected STA must reconnect outside setup mode");
 static_assert(should_reconnect_running_station(true, true),
               "setup mode must apply submitted station credentials");
-static_assert(!should_reconfigure_running_power_save(false, true),
-              "Xiaozhi keepalive must retain realtime Wi-Fi power policy");
-static_assert(should_reconfigure_running_power_save(false, false),
-              "ordinary running Wi-Fi may restore modem power save");
-static_assert(should_reconfigure_running_power_save(true, true),
-              "setup mode must retain its own Wi-Fi power policy");
 static_assert(station_config_failure_blocks_start(false),
               "ordinary STA start must fail when station config cannot be applied");
 static_assert(!station_config_failure_blocks_start(true),
@@ -163,7 +150,6 @@ enum class WifiRadioStopAttempt {
 #define WIFI_SET_MODE_FAILED_FORMAT "wifi set mode failed: %s"
 #define WIFI_START_FAILED_FORMAT "wifi start failed: %s"
 #define WIFI_STOP_SKIPPED_OTA_LOG "wifi stop skipped during OTA"
-#define WIFI_STOP_SKIPPED_XIAOZHI_LOG "Wi-Fi stop skipped: Xiaozhi AI page is active"
 #define WIFI_DISCONNECT_DURING_STOP_FAILED_FORMAT "wifi disconnect during stop failed: %s"
 #define WIFI_STOP_FAILED_FORMAT "wifi stop failed: %s"
 #define WIFI_STOP_DEFERRED_OWNER_FORMAT \
@@ -748,7 +734,6 @@ static bool configure_running_wifi_radio(bool enable_setup_portal,
     const bool station_connected =
         app_event_group_ready() &&
         ((app_event_group_get_bits() & kWifiConnectedBit) != 0);
-    const bool xiaozhi_keepalive_active = xiaozhi_ai_network_keepalive_active();
     if (!enable_setup_portal) {
         if (!stop_http_server()) {
             (void)request_setup_portal_stop();
@@ -759,10 +744,7 @@ static bool configure_running_wifi_radio(bool enable_setup_portal,
             ESP_LOGW(TAG, WIFI_STA_ONLY_MODE_FAILED_FORMAT, esp_err_to_name(mode_err));
             return false;
         }
-        if (should_reconfigure_running_power_save(enable_setup_portal,
-                                                  xiaozhi_keepalive_active)) {
-            configure_wifi_power_save(false);
-        }
+        configure_wifi_power_save(false);
     } else {
         wifi_mode_t previous_mode = WIFI_MODE_STA;
         esp_err_t previous_mode_err = esp_wifi_get_mode(&previous_mode);
@@ -1026,10 +1008,6 @@ static bool stop_wifi_radio_internal(WifiRadioStopAttempt attempt)
         ESP_LOGI(TAG, WIFI_STOP_SKIPPED_OTA_LOG);
         return false;
     }
-    if (xiaozhi_ai_network_keepalive_active() && !force_setup_portal) {
-        ESP_LOGI(TAG, WIFI_STOP_SKIPPED_XIAOZHI_LOG);
-        return false;
-    }
     if (setup_portal_active_load() && !force_setup_portal) {
         return false;
     }
@@ -1121,8 +1099,7 @@ WeatherWifiPerformanceGuard::WeatherWifiPerformanceGuard(bool enabled)
         return;
     }
     ScopedSemaphoreLock lock(s_wifi_lifecycle_mutex);
-    if (!lock || !wifi_radio_on_load() || setup_portal_active_load() ||
-        xiaozhi_ai_network_keepalive_active()) {
+    if (!lock || !wifi_radio_on_load() || setup_portal_active_load()) {
         return;
     }
     wifi_ps_type_t previous = WIFI_PS_NONE;
@@ -1149,7 +1126,7 @@ WeatherWifiPerformanceGuard::~WeatherWifiPerformanceGuard()
     ScopedSemaphoreLock lock(s_wifi_lifecycle_mutex);
     // A new start/mode transition owns its power policy; never restore stale state.
     if (!lock || !wifi_radio_on_load() || generation_ != s_wifi_power_generation ||
-        setup_portal_active_load() || xiaozhi_ai_network_keepalive_active()) {
+        setup_portal_active_load()) {
         return;
     }
     wifi_ps_type_t current = WIFI_PS_NONE;
@@ -1166,7 +1143,7 @@ void request_wifi_radio_stop_when_idle()
 {
     s_wifi_stop_when_idle_requested.store(true, std::memory_order_release);
     // Only the serialized network task services an ordinary deferred close.
-    // Calling the driver here lets Xiaozhi/OTA cleanup race a newly acquired
+    // Calling the driver here lets OTA cleanup race a newly acquired
     // network window between its ownership check and esp_wifi_stop().
     notify_wifi_stop_retry_if_pending();
 }
@@ -1203,7 +1180,6 @@ WifiRadioIdleStopResult service_wifi_radio_stop_when_idle()
     policy.setup_portal_active = setup_portal_active_load();
     int ota_state = ota_runtime_state_load();
     policy.ota_active = ota_state == kOtaChecking || ota_state == kOtaUpdating;
-    policy.xiaozhi_keepalive_active = xiaozhi_ai_network_keepalive_active();
     policy.network_lock_active = network_awake_lock_active();
     if (!wifi_idle_stop_allowed(policy)) {
         return WifiRadioIdleStopResult::kDeferred;

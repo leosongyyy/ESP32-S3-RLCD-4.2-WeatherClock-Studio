@@ -12,7 +12,6 @@ inline constexpr const char *kWeatherApiKeyKey = "api_key";
 inline constexpr const char *kWeatherProviderKey = "weather_src_v1";
 inline constexpr const char *kQweatherApiHostKey = "api_host";
 inline constexpr const char *kOfflineModeKey = "offline_v1";
-inline constexpr const char *kXiaozhiAutoReturnKey = "xz_auto_ret_v1";
 inline constexpr const char *kGalleryRotationKey = "gallery_rot_v1";
 
 } // namespace network_config_keys

@@ -1,4 +1,4 @@
-// 声明 UI 运行期超时、辅助页门控、唤醒调度和小智自动返回入口。
+// 声明 UI 运行期超时、辅助页门控和唤醒调度入口。
 #pragma once
 
 #include <freertos/FreeRTOS.h>
@@ -32,9 +32,3 @@ TickType_t ui_runtime_next_loop_delay_ticks(time_t sampled_wall_second,
                                             bool battery_blink_visible,
                                             int active_page,
                                             const UiRuntimeSurfaceSnapshot &surfaces);
-void ui_runtime_update_xiaozhi_auto_return(int active_page,
-                                           bool low_battery_mode,
-                                           const UiRuntimeSurfaceSnapshot &surfaces,
-                                           TickType_t tick_now,
-                                           TickType_t &last_activity_tick,
-                                           uint32_t &last_activity_sequence);

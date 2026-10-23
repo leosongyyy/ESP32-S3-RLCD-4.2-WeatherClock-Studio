@@ -81,17 +81,13 @@ struct WebDemoState {
         if(scene==Settings&&!secondary) {secondary=true;selection=0;dirty=true;return;}
         if(scene==Pages) {
             const uint8_t mask=static_cast<uint8_t>(enabled^(1<<selection));
-            if(mask==0 || mask==(1<<kWorkPageXiaozhiAI)) {message("至少保留一个非小智页面",now);return;}
-            if(offline && (selection==0||selection==2||selection==6||selection==7) && !(enabled&(1<<selection))) {message("当前处于离线模式",now);return;}
+            if(mask==0) {message("至少保留一个页面",now);return;}
+            if(offline && (selection==0||selection==2||selection==7) && !(enabled&(1<<selection))) {message("当前处于离线模式",now);return;}
             enabled=mask; if(!(enabled&(1<<page)))page=ordered_page(0);
-            if(ordered_page(0)==kWorkPageXiaozhiAI) {
-                for(int i=1;i<count();++i) {int p=ordered_page(i);if(p!=kWorkPageXiaozhiAI){for(int j=0;j<8;++j)if(order[j]==p){for(int k=0;k<8;++k)if(order[k]==kWorkPageXiaozhiAI){std::swap(order[j],order[k]);break;}break;}break;}}
-            }
             message("页面设置已保存",now);return;
         }
         if(scene==Order) {
             int a=ordered_page(selection), b=ordered_page((selection+1)%count());
-            if((selection==0&&b==6)||((selection+1)%count()==0&&a==6)){message("小智AI不能设为主页",now);return;}
             int ia=0,ib=0;for(int i=0;i<8;++i){if(order[i]==a)ia=i;if(order[i]==b)ib=i;}
             std::swap(order[ia],order[ib]);message("页面顺序已保存",now);return;
         }

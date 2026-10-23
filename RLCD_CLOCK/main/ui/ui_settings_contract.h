@@ -22,9 +22,8 @@ inline constexpr int kSoundSettingsSecondaryCount =
 
 inline constexpr int kDisplaySettingsPageSwitchItem = 0;
 inline constexpr int kDisplaySettingsOrderItem = 1;
-inline constexpr int kDisplaySettingsXiaozhiAutoReturnItem = 2;
-inline constexpr int kDisplaySettingsAlarmItem = 3;
-inline constexpr int kDisplaySettingsGalleryRotationItem = 4;
+inline constexpr int kDisplaySettingsAlarmItem = 2;
+inline constexpr int kDisplaySettingsGalleryRotationItem = 3;
 inline constexpr int kDisplaySettingsSecondaryCount =
     kDisplaySettingsGalleryRotationItem + 1;
 inline constexpr int kDisplaySettingsGridItemCount =
@@ -56,9 +55,11 @@ enum SettingsPrimaryMenu {
 
 static_assert(kSettingsPrimarySystem + 1 == kSettingsPrimaryCount,
               "settings primary count must match the final menu id");
-static_assert(kDisplaySettingsXiaozhiAutoReturnItem + 1 ==
-                  kDisplaySettingsAlarmItem,
-              "Xiaozhi power saving must remain immediately above alarm");
+static_assert(kDisplaySettingsOrderItem + 1 == kDisplaySettingsAlarmItem,
+              "display page switch and order must stay above the alarm switch");
+static_assert(kDisplaySettingsAlarmItem + 1 ==
+                  kDisplaySettingsGalleryRotationItem,
+              "gallery rotation must remain the final display switch");
 static_assert(kDisplaySettingsSecondaryCount ==
                   kDisplaySettingsGalleryRotationItem + 1,
               "display settings count must include gallery rotation");

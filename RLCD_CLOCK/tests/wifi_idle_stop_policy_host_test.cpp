@@ -17,9 +17,7 @@ int main()
     input.network_lock_active = false;
     assert(wifi_idle_stop_allowed(input));
 
-    input.xiaozhi_keepalive_active = true;
     assert(!wifi_idle_stop_allowed(input));
-    input.xiaozhi_keepalive_active = false;
 
     input.setup_portal_active = true;
     assert(!wifi_idle_stop_allowed(input));

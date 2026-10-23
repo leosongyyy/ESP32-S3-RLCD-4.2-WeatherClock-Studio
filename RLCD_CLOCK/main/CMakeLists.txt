@@ -57,9 +57,8 @@ idf_component_register(
         "ui/ui_flip_clock_runtime.cpp"
         "ui/ui_inverted_clock_card.cpp"
         "ui/ui_flip_sensor_mood.cpp"
-        "ui/ui_xiaozhi.cpp"
-        "ui/ui_xiaozhi_face.cpp"
-        "ui/ui_xiaozhi_subtitle.cpp"
+        "ui/ui_game.cpp"
+        "ui/ui_game_bind.cpp"
         "ui/ui_calendar.cpp"
         "ui/ui_calendar_layout.cpp"
         "ui/ui_weather_board.cpp"
@@ -100,8 +99,6 @@ idf_component_register(
         "network/network_provisioning_session.cpp"
         "network/provisioning_validation.cpp"
         "network/weather_city_text.cpp"
-        "network/weather_city_pending_state.cpp"
-        "network/weather_city_mcp.cpp"
         "network/network_form.cpp"
         "network/provisioning_form_fields.cpp"
         "network/manual_time_parser.cpp"
@@ -114,6 +111,7 @@ idf_component_register(
         "network/wifi_portal_dns.cpp"
         "network/wifi_portal_html_text.cpp"
         "network/wifi_portal_pages.cpp"
+        "network/rom_upload.cpp"
         "network/ntp_runtime_state.cpp"
         "network/ntp_services.cpp"
         "network/network_http_transaction_lock.cpp"
@@ -184,31 +182,17 @@ idf_component_register(
         "alarm/alarm_services.cpp"
         "pomodoro/pomodoro_runtime_state.cpp"
         "pomodoro/pomodoro_services.cpp"
-        "xiaozhi/xiaozhi_activation_client.cpp"
-        "xiaozhi/xiaozhi_activation_flow.cpp"
-        "xiaozhi/xiaozhi_activation_storage.cpp"
-        "xiaozhi/xiaozhi_ai.cpp"
-        "xiaozhi/xiaozhi_auto_return_state.cpp"
-        "xiaozhi/xiaozhi_audio_frames.cpp"
-        "xiaozhi/xiaozhi_binding_voice.cpp"
-        "xiaozhi/xiaozhi_binding_voice_state.cpp"
-        "xiaozhi/xiaozhi_conversation_events.cpp"
-        "xiaozhi/xiaozhi_conversation_io.cpp"
-        "xiaozhi/xiaozhi_mcp_arguments.cpp"
-        "xiaozhi/xiaozhi_mcp_json.cpp"
-        "xiaozhi/xiaozhi_mcp.cpp"
-        "xiaozhi/xiaozhi_mcp_schema.cpp"
-        "xiaozhi/xiaozhi_power_session.cpp"
-        "xiaozhi/xiaozhi_runtime_diagnostics.cpp"
-        "xiaozhi/xiaozhi_server_hello_parser.cpp"
-        "xiaozhi/xiaozhi_snapshot_state.cpp"
-        "xiaozhi/xiaozhi_text_utils.cpp"
-        "xiaozhi/xiaozhi_tts_playback.cpp"
-        "xiaozhi/xiaozhi_voice.cpp"
-        "xiaozhi/xiaozhi_voice_codec.cpp"
-        "xiaozhi/xiaozhi_voice_io_storage.cpp"
-        "xiaozhi/xiaozhi_websocket_session.cpp"
         "input/input_tasks.cpp"
+        "game/peanut_gb_impl.c"
+        "game/game_audio.cpp"
+        "game/game_emu.cpp"
+        "game/gameboy_fb.cpp"
+        "game/gameboy_input.cpp"
+        "game/gameboy_pad_ble.c"
+        "game/gameboy_hid.c"
+        "game/gameboy_pad_bind.c"
+        "game/gameboy_rom_store.cpp"
+        "game/gameboy_runtime.cpp"
         "assets/boot_anim.c"
         "assets/qweather_icons_36.c"
         "assets/zh_font_16.c"
@@ -225,13 +209,14 @@ idf_component_register(
         "audio"
         "alarm"
         "pomodoro"
-        "xiaozhi"
         "input"
         "storage"
         "assets"
+        "game"
     REQUIRES
         app_bsp
         port_bsp
+        minigb_apu
         lvgl__lvgl
         nvs_flash
         esp_wifi
@@ -249,6 +234,11 @@ idf_component_register(
         esp_driver_gpio
         json
         mbedtls
+        fatfs
+        wear_levelling
+        esp_driver_sdmmc
+        sdmmc
+        bt
         tcp_transport)
 
 string(TIMESTAMP WEATHER_CLOCK_BUILD_DATE "%Y-%m-%d")

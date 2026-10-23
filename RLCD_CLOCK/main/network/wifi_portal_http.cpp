@@ -9,6 +9,7 @@
 #include "network_diagnostics_state.h"
 #include "network_form.h"
 #include "ascii_text.h"
+#include "rom_upload.h"
 #include "setup_portal_control.h"
 #include "wifi_portal_dns.h"
 #include "wifi_portal_pages.h"
@@ -363,6 +364,10 @@ bool start_http_server()
             break;
         }
         err = register_http_handler(s_http_server, route.uri, route.method, route.handler);
+    }
+    if (err == ESP_OK) {
+        // 游戏 ROM 的列表/上传/删除路由（raw body，不做 multipart）。
+        err = rom_upload_register_routes(s_http_server);
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, PORTAL_HTTP_URI_REGISTER_FAILED_FORMAT, esp_err_to_name(err));

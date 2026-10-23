@@ -16,7 +16,7 @@ inline constexpr uint8_t kCurrentKnownPageMask =
 
 constexpr uint8_t migrate_v4_page_mask(uint8_t legacy_mask)
 {
-    return static_cast<uint8_t>(legacy_mask | (1U << kWorkPageXiaozhiAI));
+    return static_cast<uint8_t>(legacy_mask | (1U << kWorkPageGameBoy));
 }
 
 inline bool migrate_v4_page_order(const uint8_t *legacy_order,
@@ -29,15 +29,15 @@ inline bool migrate_v4_page_order(const uint8_t *legacy_order,
         return false;
     }
     memcpy(current_order, legacy_order, legacy_order_size);
-    current_order[kWorkPageXiaozhiAI] = kWorkPageXiaozhiAI;
+    current_order[kWorkPageGameBoy] = kWorkPageGameBoy;
     current_order[kWorkPageAggregateClock] = kWorkPageAggregateClock;
     return true;
 }
 
-static_assert(kWorkPageXiaozhiAI == static_cast<int>(kLegacyV4WorkPageCount),
-              "v5 migration expects Xiaozhi AI after every v4 page");
+static_assert(kWorkPageGameBoy == static_cast<int>(kLegacyV4WorkPageCount),
+              "v5 migration expects the game page after every v4 page");
 static_assert(kWorkPageCount == kWorkPageAggregateClock + 1,
               "v6 migration expects aggregate clock to be the final page");
-static_assert((kLegacyV4KnownPageMask & (1U << kWorkPageXiaozhiAI)) == 0,
-              "v4 mask must not contain the Xiaozhi AI page");
+static_assert((kLegacyV4KnownPageMask & (1U << kWorkPageGameBoy)) == 0,
+              "v4 mask must not contain the game page");
 } // namespace network_page_storage

@@ -1,9 +1,14 @@
-# Name,   Type, SubType, Offset,  Size, Flags
+# Name,   Type, SubType, Offset,   Size,     Flags
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
-nvs,      data, nvs,     ,         0x6000,
-otadata,  data, ota,     ,         0x2000,
-phy_init, data, phy,     ,         0x1000,
-ota_0,    app,  ota_0,   ,         0x6C0000,
-ota_1,    app,  ota_1,   ,         0x6C0000,
-assets,   data, 0x40,    ,         2M,
-model,    data, spiffs,  ,         0x60000,
+# 布局说明（Phase 2 冻结，不再改动）：
+#   ota_0 0x0020000..0x0620000 (6MB)
+#   ota_1 0x0620000..0x0C20000 (6MB)
+#   assets        0x0C20000..0x0E20000 (2MB，用户自定义图库，不可缩)
+#   roms          0x0E20000..0x1000000 (1.875MB，FATFS，挂载点 /roms)
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  0x600000,
+ota_1,    app,  ota_1,   0x620000, 0x600000,
+assets,   data, 0x40,    0xC20000, 0x200000,
+roms,     data, fat,     0xE20000, 0x1E0000,

@@ -31,12 +31,6 @@ int main()
     assert(!ui_low_refresh_page_minute_idle(true, false, true, false));
     assert(!ui_low_refresh_page_minute_idle(true, false, false, true));
 
-    assert(ui_xiaozhi_activation_update_due(false, false, false, true));
-    assert(!ui_xiaozhi_activation_update_due(false, false, true, true));
-    assert(ui_xiaozhi_activation_update_due(true, false, true, false));
-    assert(ui_xiaozhi_activation_update_due(true, true, true, true));
-    assert(!ui_xiaozhi_activation_update_due(true, true, true, false));
-    assert(ui_xiaozhi_activation_update_due(false, true, true, false));
 
     assert(ui_next_minute_delay_ms(0, 0) == 60005);
     assert(ui_next_minute_delay_ms(1, 1000000) == 59005);

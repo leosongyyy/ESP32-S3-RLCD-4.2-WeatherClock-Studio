@@ -28,8 +28,6 @@
 #include "qweather_api_host.h"
 #include "ui_work_page_catalog_internal.h"
 #include "weather_city_text.h"
-#include "xiaozhi_ai.h"
-#include "xiaozhi_auto_return_state_internal.h"
 #include "ui_gallery_rotation_state_internal.h"
 
 #include <esp_log.h>
@@ -99,7 +97,6 @@ bool clear_saved_config_nvs()
 static void notify_network_runtime_state_changed()
 {
     notify_network_sync_runtime_state_changed();
-    xiaozhi_ai_notify_network_configuration_changed();
 }
 
 bool set_offline_mode_enabled(bool enabled)
@@ -189,7 +186,6 @@ static void reset_saved_config_runtime_state()
     invalidate_weather_configuration();
     clear_wifi_station_ip();
     offline_mode_enabled_store(false);
-    xiaozhi_auto_return_enabled_store(kDefaultXiaozhiAutoReturnEnabled);
     gallery_rotation_period_store(kDefaultGalleryRotationPeriod);
     chime_runtime_snapshot_store({
         false,
@@ -415,7 +411,6 @@ bool save_config(const char *ssid,
     ip_geolocation_cache_invalidate();
     invalidate_weather_configuration();
     offline_mode_enabled_store(false);
-    xiaozhi_ai_notify_network_configuration_changed();
     return true;
 }
 
