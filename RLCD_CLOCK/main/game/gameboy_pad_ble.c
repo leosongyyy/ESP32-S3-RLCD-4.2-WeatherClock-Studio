@@ -60,7 +60,14 @@ extern void ble_store_config_init(void);
 #define PAD_NAME_LEN       24
 #define PAD_CCCD_SCAN_SPAN 10      // 值句柄之后最多找 10 个描述符
 #define PAD_RETRY_DELAY_MS 4000
-#define PAD_CONNECT_TIMEOUT_MS 9000
+//
+// ⚠ 这个值就是「空等十几秒」的直接来源，别再调大。
+// 连接请求的超时只在**对端根本不回应**时才用得上：地址对了的手柄通常几百毫秒
+// 内就建链。而地址不对是个常态——Q36「for Android」用的是随机地址，同一台设备
+// 每次上电末位都变（现场抓到过 03:25:00:33:35:ac / :bd / :be），NVS 里存的那个
+// 下次开机必然连不上，只能等超时。9 秒超时 + 4 秒重扫 = 一轮 13 秒，而退回扫描
+// 反而不到 1 秒就找到。所以这里缩短到 3 秒，把错误地址的代价封顶。
+#define PAD_CONNECT_TIMEOUT_MS 3000
 
 typedef enum {
     ST_OFF = 0,
@@ -105,6 +112,9 @@ static bool             s_was_visible;
 static ble_addr_t s_attempt_addr;
 static uint32_t   s_avoid_until_ms;
 static bool       s_avoid_valid;
+// 最近一次决定去连的那台设备，广播里报出来的名字。
+// 身份要以它为准而不是地址——地址在这类手柄上不稳定，见 s_peer_fresh。
+static char       s_adv_name[PAD_NAME_LEN];
 
 static uint16_t s_svc_start;
 static uint16_t s_svc_end;
@@ -165,10 +175,24 @@ static bool s_desc_covered[GB_BTN_COUNT];
 
 #define PAD_PEER_NVS_NAMESPACE "padpeer"
 #define PAD_PEER_NVS_KEY       "last"
+// 设备名单独存一个 key。地址在这类手柄上**不是稳定身份**（见下面的 s_peer_fresh
+// 说明），能跨开机复用的只有广播里的名字；分开存也让旧版 7 字节 blob 继续可用，
+// 不会因为长度对不上被整条判成"没有已知手柄"。
+#define PAD_PEER_NVS_NAME      "name"
 #define PAD_PEER_FAIL_LIMIT    2
 
 static bool       s_peer_valid;
 static ble_addr_t s_peer;
+// 「这个地址是本次上电期间亲眼看到/亲手连上的吗」。
+//
+// ⚠ 只有 fresh 的地址才允许拿去做直连。NVS 里读出来的地址一律不许：Q36 用的是
+// 随机地址，末位每次上电都变，读出来的旧地址必然连不上，一轮就是 3 秒超时（原
+// 来 9 秒）+ 重扫等待，而直接扫描不到 1 秒就能找到。也就是说对这类设备，跨开机
+// 的"直连"不但没省时间，反而是纯粹倒贴。
+// 同一台设备在本次会话里地址不会变，所以掉线后重连仍然走直连，那条快路径保留。
+static bool       s_peer_fresh;
+// 上一次成功用过的手柄的名字（广播里的 Complete/Shortened local name）。
+static char       s_peer_name[PAD_NAME_LEN];
 // 同一台设备本轮回连失败的次数，只活在内存里，不落盘。
 static uint8_t    s_peer_fail;
 // 本轮这次连接是不是"直连记住的手柄"（决定了 CONNECT 失败时该怎么降级）。
@@ -201,6 +225,8 @@ static void pad_peer_save(const ble_addr_t *a)
     s_peer = *a;
     s_peer_valid = true;
     s_peer_fail = 0;
+    // 这个地址是本次上电亲眼看到并亲手连上的，本次会话内允许拿它做直连。
+    s_peer_fresh = true;
 
     uint8_t blob[7];
     memcpy(blob, a->val, 6);
@@ -212,6 +238,13 @@ static void pad_peer_save(const ble_addr_t *a)
         return;
     }
     esp_err_t err = nvs_set_blob(h, PAD_PEER_NVS_KEY, blob, sizeof(blob));
+    // 名字是可跨开机复用的那一份身份，单独一个 key 存。写失败不致命：
+    // 下次开机退化成"扫描到谁是谁"，功能不缺，只是没法在多台手柄里挑这台。
+    if (err == ESP_OK && s_adv_name[0] != '\0') {
+        if (nvs_set_str(h, PAD_PEER_NVS_NAME, s_adv_name) == ESP_OK) {
+            memcpy(s_peer_name, s_adv_name, PAD_NAME_LEN);
+        }
+    }
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
@@ -227,23 +260,34 @@ static void pad_peer_save(const ble_addr_t *a)
 static void pad_peer_load(void)
 {
     s_peer_valid = false;
+    s_peer_fresh = false;
+    s_peer_name[0] = '\0';
 
     nvs_handle_t h;
     if (nvs_open(PAD_PEER_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
         ESP_LOGI(PAD_TAG, "no known gamepad yet");
         return;
     }
+    // 名字先读：它是唯一能跨开机复用的身份（地址这类手柄上会变）。
+    // 地址读不出来也无所谓，光有名字就够在扫描时从一堆手柄里认出这台。
+    size_t nlen = sizeof(s_peer_name);
+    if (nvs_get_str(h, PAD_PEER_NVS_NAME, s_peer_name, &nlen) != ESP_OK) {
+        s_peer_name[0] = '\0';
+    }
+
     uint8_t blob[7] = { 0 };
     size_t len = sizeof(blob);
     const esp_err_t err = nvs_get_blob(h, PAD_PEER_NVS_KEY, blob, &len);
     nvs_close(h);
 
     if (err != ESP_OK || len != sizeof(blob)) {
-        ESP_LOGI(PAD_TAG, "no known gamepad yet");
+        ESP_LOGI(PAD_TAG, "no known gamepad addr (name=%s)",
+                 s_peer_name[0] ? s_peer_name : "(none)");
         return;
     }
     if (pad_addr_unusable(blob)) {
-        ESP_LOGI(PAD_TAG, "no known gamepad yet (unusable addr)");
+        ESP_LOGI(PAD_TAG, "no known gamepad yet (unusable addr, name=%s)",
+                 s_peer_name[0] ? s_peer_name : "(none)");
         return;
     }
 
@@ -251,10 +295,16 @@ static void pad_peer_load(void)
     s_peer.type = blob[6];
     s_peer_valid = true;
     s_peer_fail = 0;
-    ESP_LOGI(PAD_TAG, "known gamepad %02x:%02x:%02x:%02x:%02x:%02x type=%u",
+    // ⚠ 刻意**不**置 s_peer_fresh。这个地址是上一次开机存下来的，对随机地址的
+    //   手柄来说现在多半已经变了，拿它直连只会白等一个超时再退回扫描，反而比
+    //   直接扫描慢。本次会话内亲手连上之后 pad_peer_save() 才会把它标成 fresh，
+    //   那时（掉线重连）才是真能省时间的场景。
+    ESP_LOGI(PAD_TAG,
+             "known gamepad %02x:%02x:%02x:%02x:%02x:%02x type=%u name=%s",
              s_peer.val[5], s_peer.val[4], s_peer.val[3],
              s_peer.val[2], s_peer.val[1], s_peer.val[0],
-             (unsigned)s_peer.type);
+             (unsigned)s_peer.type,
+             s_peer_name[0] ? s_peer_name : "(none)");
 }
 
 // ---------------------------------------------------------------- 状态
@@ -2098,7 +2148,12 @@ static void pad_begin_search(void)
 // 直连记住的手柄。返回 false 表示"没有可直连的目标"，调用方退回扫描。
 static bool pad_try_known_peer(void)
 {
-    if (!s_peer_valid || s_stop_requested) {
+    // ⚠ 只有本次上电期间亲眼连上的地址才允许拿去直连。
+    //   NVS 里读出来的旧地址一律不用：这类手柄用随机地址，末位每次上电都变
+    //   （现场抓到过 03:25:00:33:35:ac / :bd / :be），旧地址必然连不上，一轮就是
+    //   「超时 + 重扫等待」，比直接开扫描还慢。省不掉的那点时间反被它吃掉了。
+    //   同一台设备在本次会话里地址不变，所以掉线后重连仍走这条快路径。
+    if (!s_peer_valid || !s_peer_fresh || s_stop_requested) {
         return false;
     }
     // 已经有链路就别再连：ble_gap_connect() 再发一次只会白占一个连接槽。
@@ -2272,6 +2327,20 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
                  has_name ? adv_name : "(none)",
                  ad[5], ad[4], ad[3], ad[2], ad[1], ad[0]);
 
+        // 记下这台的名字。地址在这类手柄上每次上电都变，名字是唯一能跨开机复用
+        // 的身份，pad_peer_save() 会把它落盘，下次开机靠它认人。
+        if (has_name) {
+            memcpy(s_adv_name, adv_name, PAD_NAME_LEN);
+        }
+        if (s_peer_name[0] != '\0') {
+            if (has_name && strncmp(s_peer_name, adv_name, PAD_NAME_LEN) == 0) {
+                ESP_LOGI(PAD_TAG, "recognized known gamepad: %s", adv_name);
+            } else {
+                ESP_LOGW(PAD_TAG, "gamepad name mismatch (known=%s, this=%s)",
+                         s_peer_name, has_name ? adv_name : "(none)");
+            }
+        }
+
         // 刚连失败过的、且还在拉黑期内的，直接跳过。
         if (s_avoid_valid) {
             const uint32_t now_ms = pad_now_ms();
@@ -2343,6 +2412,8 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
             // 直连记住的手柄失败：只在本轮放弃它，退回扫描，**不擦 NVS**。
             // 用户把手柄关了再开是最常见的操作，下次上电还应该记得这台设备；
             // 因为一次没连上就永久忘掉，等于把新增的重连功能又废掉了。
+            // 失败的目标进拉黑名单，避免下一轮扫描又选中它再空等一个超时。
+            pad_avoid_addr(&s_attempt_addr);
             if (s_peer_attempt) {
                 s_peer_attempt = false;
                 if (s_peer_fail < 0xFF) {
@@ -2350,13 +2421,18 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
                 }
                 if (s_peer_fail >= PAD_PEER_FAIL_LIMIT && s_peer_valid) {
                     s_peer_valid = false;
+                    s_peer_fresh = false;
                     ESP_LOGW(PAD_TAG, "forget known gamepad after %u failed "
                              "reconnects, fall back to scan",
                              (unsigned)s_peer_fail);
                 }
+                // ⚠ 直连失败**不要**走 ST_RETRY_WAIT 那 4 秒等待。地址连不上是
+                //   此刻就能确定的事，再干等 4 秒纯属浪费——原来一轮是 9 秒超时
+                //   + 4 秒重扫 = 13 秒，而手柄就在旁边，扫描不到 1 秒就能收到。
+                //   这里立刻改扫，空窗从 13 秒压到 3 秒。
+                pad_scan_start();
+                return 0;
             }
-            // 失败的目标进拉黑名单，避免下一轮扫描又选中它再空等 9 秒。
-            pad_avoid_addr(&s_attempt_addr);
             s_state = ST_RETRY_WAIT;
             s_retry_at_ms = (uint64_t)(esp_timer_get_time() / 1000) + PAD_RETRY_DELAY_MS;
             return 0;
