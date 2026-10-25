@@ -411,6 +411,10 @@ static bool s_hat_ready;
 // 校准收敛时把中位落盘（定义在本文件后半部分，pad_apply_descriptor() 要用）。
 static void pad_hat_nvs_save(uint8_t anchor, uint8_t rid);
 
+// 这次连接的中位是从 NVS 存档里恢复的。除了免掉校准，它还意味着**这台设备
+// 我们以前成功用过** —— 下面「假连接」探测要靠这个信息放行，见那里的说明。
+static bool s_hat_cache_hit;
+
 // 校准窗口：凑够这么多条转移边就锁死锚点。8 条边在选 ROM 那几下上下键里就能
 // 凑齐，用户基本察觉不到校准过程。
 #define PAD_HAT_CALIB_TRANSITIONS 8
@@ -1242,6 +1246,7 @@ static uint32_t pad_map_sum(void)
 // 描述符解析成功后调用：命中存档就直接套用，本次不再校准。
 static void pad_hat_nvs_load(void)
 {
+    s_hat_cache_hit = false;            // 每次连接重新判定
     nvs_handle_t h = 0;
     if (nvs_open(PAD_PEER_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
         return;                         // 还没存过，走正常校准
@@ -1281,6 +1286,7 @@ static void pad_hat_nvs_load(void)
     }
     s_hat_anchor_raw = anchor;
     s_hat_ready = true;
+    s_hat_cache_hit = true;
     // ⚠ 刻意**不**置 frozen：留着让 hat_resolve_center() 继续观察。存档万一
     //   不对（手柄换了模式但描述符照旧），用户按两下就会被纠正，而不是一路
     //   错到断电 —— hat_resolve_center() 是确定性的，不会像老版统计量那样漂。
@@ -2406,6 +2412,7 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
         s_hat_first_ms = 0;
         s_hat_frozen = false;
         s_hat_ready = false;
+        s_hat_cache_hit = false;   // 下次连接重新查存档，别沿用上次的结论
         s_hat_distinct = 0;
         s_hat_distinct_logged = false;
         // Report Map 相关：换一台设备 map 就完全不同，句柄和缓冲都必须重来。
@@ -2846,7 +2853,19 @@ static void pad_service_task(void *arg)
 
         // 「假连接」探测：进了 READY 却一条报文都没收到。
         // 连续撞满上限就停在 ERROR，避免无限重连刷日志；用户离开再进本页可重试。
-        if (s_state == ST_READY && s_reports == 0 &&
+        // ⚠ s_hat_cache_hit 为真时要**整个跳过**这条探测，不能只是放宽时限。
+        //
+        // 判据是「READY 之后 15 秒还没收到一包」，本意是抓 Switch Pro /
+        // DualSense 那类必须先收 Output Report 握手才开始上报的设备。但 Q36
+        // 这类手柄**静置时一包都不发**（实测 150 秒 0 包），它是完全正常的，
+        // 只是安静。于是用户连上后只要 15 秒没碰手柄，就会被判定成假连接、
+        // 主动断开重来 —— 而 s_reports 在断线时被清零（2388 行），下一次连上
+        // 探测又从头开始，形成「连上 → 15 秒 → 断开 → 重连」的循环；撞满 3 次
+        // 直接进 ST_ERROR，得离开游戏页再进来才恢复。
+        //
+        // 而中位存档命中就意味着这台设备以前**成功用过**（存档是在校准收敛时
+        // 才写的，能收敛说明报文是通的），再用"一直没报文"去怀疑它就没有道理。
+        if (s_state == ST_READY && !s_hat_cache_hit && s_reports == 0 &&
             (uint32_t)(now - s_ready_since_ms) > PAD_READY_PROBE_MS) {
             ++s_empty_ready_count;
             ESP_LOGW(PAD_TAG,
