@@ -403,6 +403,11 @@ static uint32_t s_hat_transitions;   // 已经发生多少次 hat 变化
 static uint32_t s_hat_first_ms;      // 第一个样本的时刻
 static bool     s_hat_frozen;        // 校准窗口已过，锚点不再改动
 
+// 拿到至少两条**不同**的 hat 取值之前，我们对手柄的编码约定一无所知。
+// 这段时间内一律输出"居中"，绝不猜 —— 见下面的说明。
+#define PAD_HAT_MIN_TRANSITIONS  1
+static bool s_hat_ready;
+
 // 校准窗口：凑够这么多条转移边就锁死锚点。8 条边在选 ROM 那几下上下键里就能
 // 凑齐，用户基本察觉不到校准过程。
 #define PAD_HAT_CALIB_TRANSITIONS 8
@@ -432,68 +437,60 @@ static bool hat_value_in_range(uint32_t v, int32_t lmin, int32_t lmax)
     return iv >= (int64_t)lmin && iv <= (int64_t)lmax;
 }
 
-// 在见过的值里挑锚点。判据依次是：
+// 判定静止中位（"锚点"）。返回 -1 表示信息还不够，调用方应继续输出居中。
 //
-//   1) 转移度数高的优先。中心是所有方向的枢纽，度数必然最高；单个方向只和
-//      中心相邻，度数为 1。
-//   2) 度数并列时，**出现次数少的**优先。中位是"每按一次方向就路过一次"的
-//      枢纽，而长按方向不动会猛涨那个方向的计数（按住的同时连点 A 也一样，
-//      每点一下都带一包 hat 同值的报文），所以计数少的一侧才是中位。
-//   3) 还是并列时，区间外的值优先 —— 按规范它就是 null，也就是居中（族 B 的
-//      8 / 15）。
-//   4) 最后取最小的 —— 族 A 的"0 = 居中"是最常见的约定。
+// ⚠ 这里刻意**不用任何统计量**（"出现最多的是中心"/"转移度数最高的是中心"）。
+//   两条都实测翻车过：
 //
-// 这三条裁决覆盖了两种族在"用户只按过一两个方向"这种最坏情况下的判定：
-//   族 A 只按了右：候选 {0(中), 3(右)}，度数并列 → 计数少的是 0 → 对；
-//   族 B 只按了上：候选 {8(中), 0(上)}，度数并列 → 计数少的是 8 → 对。
+//   · 出现次数：手柄只在状态变化时才发报文，统计的是**事件数**不是时间。
+//     按住方向键连点 A，每点一下都带一包 hat 同值的报文，那个方向的计数会
+//     被刷爆，中位反而成了少数派。
 //
-// ⚠ 这个函数的返回值只取决于 hist / degree 的当前内容，是**确定性**的，所以
-//   调用方可以在校准窗口内每次都无条件采纳它，不会来回抖（数据只会单调增长）。
-// 返回 -1 表示还没有任何样本。
-static int hat_pick_anchor(int32_t lmin, int32_t lmax)
+//   · 转移度数：用户沿十字键转一圈（下 → 下右 → 右）不经过中心时，四个取值
+//     的度数**完全并列**（每个都连着前后两个），挑出来的是随手哪个，映射会
+//     整体旋转 —— 表现是方向键错乱且自洽，看日志只会觉得"很正常"。
+//
+// 改用**规范给的先验**，两条判据按可靠性排序，命中即返回：
+//
+//   1) 见过描述符声明区间之外的值 ⇒ 按 HID 规范它就是 null，也就是居中。
+//      族 B 的手柄（0=上，8 或 15 = 居中）走这条。要求它至少参与过一次转移，
+//      挡掉"某个值偶尔抖出区间"这种毛刺。
+//
+//   2) 所有见过的值都在区间内，且 0 参与过转移 ⇒ 族 A（0 = 居中，1..8 顺
+//      时针）。Q36 就是这种：描述符照抄规范写了 0..7 + Null State，固件却按
+//      族 A 发。
+//
+// 两者都不满足说明我们还没见过中心（比如连上后一直按着某个方向不放），
+// 返回 -1，继续输出居中 —— 不猜。
+static int hat_resolve_center(int32_t lmin, int32_t lmax)
 {
-    int      best = -1;
-    unsigned best_deg = 0;
-    uint16_t best_cnt = 0;
+    // ---- 判据 1：区间外的值 = null ----
+    int      oor = -1;
+    uint16_t oor_cnt = 0;
     for (uint16_t v = 0; v < PAD_HAT_HIST_MAX; ++v) {
         if (s_hat_hist[v] == 0u) {
             continue;
         }
-        const unsigned deg =
-            (unsigned)__builtin_popcount((unsigned)s_hat_degree[v]);
-        const uint16_t cnt = s_hat_hist[v];
-        if (best < 0) {
-            best = (int)v;
-            best_deg = deg;
-            best_cnt = cnt;
+        if (hat_value_in_range((uint32_t)v, lmin, lmax)) {
             continue;
         }
-        if (deg != best_deg) {
-            if (deg > best_deg) {
-                best = (int)v;
-                best_deg = deg;
-                best_cnt = cnt;
-            }
-            continue;
+        if (s_hat_degree[v] == 0u) {
+            continue;               // 只是个毛刺，没参与过转移
         }
-        if (cnt != best_cnt) {
-            if (cnt < best_cnt) {
-                best = (int)v;
-                best_cnt = cnt;
-            }
-            continue;
-        }
-        const bool best_in = hat_value_in_range((uint32_t)best, lmin, lmax);
-        const bool cand_in = hat_value_in_range((uint32_t)v, lmin, lmax);
-        if (best_in && !cand_in) {
-            best = (int)v;           // 区间外的更像 null
-            best_cnt = cnt;
-        } else if (best_in == cand_in && (uint32_t)v < (uint32_t)best) {
-            best = (int)v;
-            best_cnt = cnt;
+        if (oor < 0 || s_hat_hist[v] > oor_cnt) {
+            oor = (int)v;
+            oor_cnt = s_hat_hist[v];
         }
     }
-    return best;
+    if (oor >= 0) {
+        return oor;
+    }
+
+    // ---- 判据 2：区间内见过 0，且 0 参与过转移 ⇒ 族 A ----
+    if (s_hat_hist[0] != 0u && s_hat_degree[0] != 0u) {
+        return 0;
+    }
+    return -1;
 }
 
 // 方向键：同时兼容两族 hat 约定
@@ -647,18 +644,26 @@ static void pad_desc_mark(bool covered[GB_BTN_COUNT], bool pressed[GB_BTN_COUNT]
                           bool desc_live[PAD_BIND_COUNT],
                           gb_button_t gb, int bind, bool on)
 {
-    if (!on) {
-        return;
-    }
+    // ⚠ covered **无论 on 真假都要置位**。它表示的是"描述符这一包对这个键
+    //   给出过结论"，不是"这个键被按下了"。
+    //
+    //   只在按下时置位会留一个洞：描述符刚判完"松开"的那一包 covered 还是
+    //   false，pad_handle_report() 末尾的绑定表就又能插进来写这个键。绑定表
+    //   记的是"某个字节等于某个位模式"（pad_bind_pressed() 就是一次按位比较），
+    //   一条当年捕获偏了的绑定一旦需要两个位同时成立才匹配，表现就是"要两个
+    //   键一起按才会触发这个键"。
+    //
     // ⚠ 必须先挡掉越界的 gb：pad_desc_button_to_gb() 用 GB_BTN_COUNT 当"忽略"
     //   哨兵值，直接拿它当下标会写到 covered[8] —— 数组只有 8 个元素，这是一次
     //   越界写，在栈上会把相邻变量改掉，症状随机且极难查。
     if ((int)gb >= 0 && (int)gb < (int)GB_BTN_COUNT) {
         covered[(int)gb] = true;
-        pressed[(int)gb] = true;
+        // ⚠ 用 || 而不是 = ：按钮 1（A）和按钮 3（X）都映射到 GB_BTN_A，
+        //   直接赋值会让后写的那条把先写的抹掉。
+        pressed[(int)gb] = pressed[(int)gb] || on;
     }
-    if (bind >= 0 && bind < (int)PAD_BIND_COUNT) {
-        desc_live[bind] = true;
+    if (on && bind >= 0 && bind < (int)PAD_BIND_COUNT) {
+        desc_live[bind] = true;         // 绑定页的高亮只关心"按下"
     }
 }
 
@@ -793,23 +798,20 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
                 }
                 const uint32_t v = hid_extract_bits(body, body_len,
                                                     (uint16_t)off, f->bit_size);
-                if (v == 0u) {
-                    continue;
-                }
                 const uint16_t btn = (uint16_t)(f->usage_min + k);
+                // ⚠ 松开也要调用，不能 continue 掉：covered 记的是"有结论"，
+                //   跳过的那些包正是绑定表最容易钻进来的空档（见 pad_desc_mark）。
                 pad_desc_mark(covered, pressed, desc_live,
                               pad_desc_button_to_gb(btn),
-                              pad_desc_button_to_bind(btn), true);
+                              pad_desc_button_to_bind(btn), v != 0u);
             }
         } else {
             // 单一用法：整个字段就是一个按钮。
             const uint32_t v = hid_extract_bits(body, body_len, f->bit_offset,
                                                 f->bit_size);
-            if (v != 0u) {
-                pad_desc_mark(covered, pressed, desc_live,
-                              pad_desc_button_to_gb(f->usage_min),
-                              pad_desc_button_to_bind(f->usage_min), true);
-            }
+            pad_desc_mark(covered, pressed, desc_live,
+                          pad_desc_button_to_gb(f->usage_min),
+                          pad_desc_button_to_bind(f->usage_min), v != 0u);
         }
     }
 
@@ -862,40 +864,72 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
 
             if (!s_hat_have_anchor) {
                 s_hat_have_anchor = true;
-                s_hat_anchor_raw = raw;      // 首样本先顶上，别让首帧无锚点
+                // ⚠ 这里**绝不**拿首样本当锚点。
+                //
+                // Q36 这类手柄静置时一包报文都不发（实测 150 秒 0 包），所以
+                // 第一包必然是"用户刚按下的那个方向"。拿它当锚点，等于把手指
+                // 正按着的方向判成静止中位，后果是一次按下全错且自洽：
+                //   正按 下 → raw == 锚点 → 判居中 → 没反应；
+                //   按 下+右（raw=下-1）→ 落进 DOWN 的三档区间 → 反而出"下"。
+                // 这正是"两个键一起按才会触发下"的形状。
+                //
+                // 而且锚点一旦被种错，在"用户只用一个方向"期间永远修不回来：
+                // 冻结要求至少 3 条转移边，而长按不动不产生任何边。
                 s_hat_first_ms = (uint32_t)(esp_timer_get_time() / 1000);
             } else if (!s_hat_frozen) {
                 // 校准窗口内：每次都按当前证据重挑。hat_pick_anchor() 是确定性
                 // 的，数据又只增不减，所以不会来回抖；而"度数必须严格更高才换"
                 // 那种写法会把上面 2/3/4 三条并列裁决全挡掉 —— 用户只按过一个
                 // 方向时恰好就是并列，锚点会一直锁在错的那个上。
-                const int cand = hat_pick_anchor(f->logical_min,
-                                                 f->logical_max);
-                if (cand >= 0 && (uint32_t)cand != s_hat_anchor_raw) {
-                    ESP_LOGI(PAD_TAG,
-                             "hat anchor %u -> %u (deg %u cnt %u)",
-                             (unsigned)s_hat_anchor_raw, (unsigned)cand,
-                             (unsigned)__builtin_popcount(
-                                 (unsigned)s_hat_degree[cand]),
-                             (unsigned)s_hat_hist[cand]);
-                    s_hat_anchor_raw = (uint32_t)cand;
-                }
-                const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-                const bool enough_edges =
-                    s_hat_transitions >= PAD_HAT_CALIB_TRANSITIONS ||
-                    (s_hat_transitions >= PAD_HAT_CALIB_MIN_TRANS &&
-                     (now_ms - s_hat_first_ms) >= PAD_HAT_CALIB_WINDOW_MS);
-                if (enough_edges) {
-                    s_hat_frozen = true;
-                    ESP_LOGI(PAD_TAG,
-                             "hat anchor locked raw=%u deg=%u cnt=%u "
-                             "(trans=%u, %u ms)",
-                             (unsigned)s_hat_anchor_raw,
-                             (unsigned)__builtin_popcount(
-                                 (unsigned)s_hat_degree[s_hat_anchor_raw]),
-                             (unsigned)s_hat_hist[s_hat_anchor_raw],
-                             (unsigned)s_hat_transitions,
-                             (unsigned)(now_ms - s_hat_first_ms));
+                //
+                // ⚠ 至少见过两个不同取值才允许挑锚点：一个值什么都说明不了，
+                //   挑出来就是"刚才按着的那个方向"。
+                // ⚠ 至少见过两个不同取值才允许定锚点：一个值什么都说明不了，
+                //   定出来就是"刚才按着的那个方向"。
+                if (s_hat_transitions < PAD_HAT_MIN_TRANSITIONS) {
+                    // 还不够，本包仍然输出居中（见下面的 dir 判定）。
+                } else {
+                    const int cand = hat_resolve_center(f->logical_min,
+                                                        f->logical_max);
+                    if (!s_hat_ready && cand >= 0) {
+                        s_hat_ready = true;
+                        s_hat_anchor_raw = (uint32_t)cand;
+                        ESP_LOGI(PAD_TAG,
+                                 "hat ready: anchor=%u (lmin=%d lmax=%d)",
+                                 (unsigned)s_hat_anchor_raw,
+                                 (int)f->logical_min, (int)f->logical_max);
+                    } else if (cand >= 0 &&
+                               (uint32_t)cand != s_hat_anchor_raw) {
+                        ESP_LOGI(PAD_TAG,
+                                 "hat anchor %u -> %u (deg %u cnt %u)",
+                                 (unsigned)s_hat_anchor_raw, (unsigned)cand,
+                                 (unsigned)__builtin_popcount(
+                                     (unsigned)s_hat_degree[cand]),
+                                 (unsigned)s_hat_hist[cand]);
+                        s_hat_anchor_raw = (uint32_t)cand;
+                    }
+                    const uint32_t now_ms =
+                        (uint32_t)(esp_timer_get_time() / 1000);
+                    // ⚠ 冻结的前提是 s_hat_ready：没拿到第二个取值就冻，冻住的
+                    //   是"连上时手指正按着的那个方向"，比不冻还糟。
+                    const bool enough_edges =
+                        s_hat_ready &&
+                        (s_hat_transitions >= PAD_HAT_CALIB_TRANSITIONS ||
+                         (s_hat_transitions >= PAD_HAT_CALIB_MIN_TRANS &&
+                          (now_ms - s_hat_first_ms) >=
+                              PAD_HAT_CALIB_WINDOW_MS));
+                    if (enough_edges) {
+                        s_hat_frozen = true;
+                        ESP_LOGI(PAD_TAG,
+                                 "hat anchor locked raw=%u deg=%u cnt=%u "
+                                 "(trans=%u, %u ms)",
+                                 (unsigned)s_hat_anchor_raw,
+                                 (unsigned)__builtin_popcount(
+                                     (unsigned)s_hat_degree[s_hat_anchor_raw]),
+                                 (unsigned)s_hat_hist[s_hat_anchor_raw],
+                                 (unsigned)s_hat_transitions,
+                                 (unsigned)(now_ms - s_hat_first_ms));
+                    }
                 }
             }
             // ⚠ 冻结之后这里什么都不做。锚点是设备的编码约定，跟用户玩了多久、
@@ -903,9 +937,13 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
         }
 
         int dir;
-        if (raw == s_hat_anchor_raw) {
+        if (!s_hat_ready || raw == s_hat_anchor_raw) {
             // 与静止中位一致 ⇒ 没按方向。这一条是挡住"卡上/卡下"的主力：
             //   无论设备用哪一族，静止值本身都不能被当成方向。
+            //
+            // !s_hat_ready 期间同样一律居中：此时我们还不知道这台设备用哪一族，
+            //   输出任何方向都是在赌。赌错的代价（方向键自己动 / 该按的不出）
+            //   远大于"第一次按下没反应"。
             dir = 8;
         } else {
             const int64_t rv = (int64_t)raw;
@@ -933,7 +971,7 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
                      (int)f->logical_min, (int)f->logical_max);
         }
 
-        if (!s_hat_anchor_logged && s_hat_have_anchor) {
+        if (!s_hat_anchor_logged && s_hat_ready) {
             s_hat_anchor_logged = true;
             ESP_LOGI(PAD_TAG,
                      "hat anchor raw=%u (lmin=%d lmax=%d size=%u frozen=%d)",
@@ -2253,6 +2291,7 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
         s_hat_transitions = 0;
         s_hat_first_ms = 0;
         s_hat_frozen = false;
+        s_hat_ready = false;
         s_hat_distinct = 0;
         s_hat_distinct_logged = false;
         // Report Map 相关：换一台设备 map 就完全不同，句柄和缓冲都必须重来。
