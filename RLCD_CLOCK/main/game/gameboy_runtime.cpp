@@ -4,6 +4,7 @@
 #include "game_audio.h"
 #include "game_config.h"
 #include "game_emu.h"
+#include "gameboy_chrome.h"
 #include "gameboy_fb.h"
 #include "gameboy_input.h"
 #include "gameboy_rom_store.h"
@@ -198,6 +199,8 @@ void gameboy_task_entry(void *)
     bool pause_painted = false;
     // 音频会话的暂停镜像：只在暂停状态变化时调用 sink，避免每帧都跨模块。
     bool sink_paused = false;
+    // 侧栏（时间 / 电量 / 手柄 / 音量）的检查时刻。每秒看一次签名，变了才重画。
+    int64_t last_chrome_check_us = esp_timer_get_time();
 
     // 把本任务挂到任务看门狗上：本工程 CONFIG_ESP_TASK_WDT_PANIC=y，
     // 一旦超过 TWDT 超时就会 panic 重启（不是打日志），订阅后每帧补喂。
@@ -242,6 +245,18 @@ void gameboy_task_entry(void *)
             // 出暂停：音频从当前 APU 状态继续渲染。
             sink_paused = false;
             game_audio_set_paused(false);
+        }
+
+        // 侧栏状态栏每秒检查一次：时间跳分钟、电量跨档、手柄连上/断开、
+        // 音量变动，才重画并推那两条 40px 宽的竖条。没变化就一个字节都不发。
+        // ⚠ 放在模拟之前而不是推屏那一段：一次侧栏推送约 5ms，塞进推屏段会
+        //   直接吃掉本帧的时间预算，把帧节拍打乱。放在这里顶多是这一帧慢一点。
+        const int64_t chrome_now_us = esp_timer_get_time();
+        if ((chrome_now_us - last_chrome_check_us) >= 1000000) {
+            last_chrome_check_us = chrome_now_us;
+            s_in_present.store(true);
+            (void)game_chrome_refresh(false);
+            s_in_present.store(false);
         }
 
         game_emu_set_joypad_register(gameboy_pad_joypad_register());

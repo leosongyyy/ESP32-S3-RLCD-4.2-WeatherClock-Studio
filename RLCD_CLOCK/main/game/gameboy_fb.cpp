@@ -15,6 +15,7 @@
 
 #include "app_hardware.h"
 #include "game_config.h"
+#include "gameboy_chrome.h"
 
 #include <esp_log.h>
 
@@ -232,6 +233,12 @@ bool game_fb_prepare_surface(void)
                                 (uint8_t)ColorBlack)) {
         ESP_LOGW(kFbLogTag, "panel border fill rejected");
     }
+    // 左右两条 40px 原来整片留黑，看着就是两条黑边。这里画成 Game Boy 机身
+    // （电量 / 日期 / 时间 / 手柄 / 音量 + 十字键 A/B 键喇叭栅格等装饰）。
+    // ⚠ 必须放在 RLCD_Present() **之前**：本函数这一次的推屏是整屏的，顺带
+    //   就把侧栏一起推上去了，不需要再单独做一次局部刷新。
+    game_chrome_draw_all();
+
     // 黑边只在整屏推一次，之后逐帧只推 GB 窗口（省 20% SPI 时间）。
     display.RLCD_Present();
     s_row_ready[0] = false;

@@ -187,6 +187,7 @@ idf_component_register(
         "game/game_audio.cpp"
         "game/game_emu.cpp"
         "game/gameboy_fb.cpp"
+        "game/gameboy_chrome.cpp"
         "game/gameboy_input.cpp"
         "game/gameboy_pad_ble.c"
         "game/gameboy_hid.c"
