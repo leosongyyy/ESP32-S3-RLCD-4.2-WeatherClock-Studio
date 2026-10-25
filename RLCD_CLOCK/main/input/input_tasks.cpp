@@ -255,6 +255,35 @@ void poll_gamepad_while_running(bool boot_pressed, bool key_pressed, TickType_t 
 //
 // 左/右是音量的全局快捷键，同样只认边沿，**且不参与连发**：音量一共 6 档，
 // 连发会让手指一抖就绕好几圈，用户根本停不到想要的档位上。
+// 执行「当前焦点项」：焦点在音量行上时是音量 +1 档，否则启动当前 ROM。
+//
+// ⚠ 音量档位动不了时**必须退回启动路径**，不能把这一下吞掉。
+//   s_volume_focused 是被左右键（音量快捷键）**粘住**的 ——
+//   game_page_volume_step_up() / step_down() 每次都会把它置 true，而只有上下
+//   换焦点（game_page_focus_next/prev）才会清掉。所以用户只要碰过一次左右，
+//   焦点就一直停在音量行上。此时再按 A：档位已经到顶的话
+//   game_audio_volume_step_up() 返回 false，屏幕上一点变化都没有，连日志都
+//   不打 —— 用户看到的就是「A 键时灵时不灵」，而它其实从来没坏过，只是焦点
+//   被粘在了一行上。
+//
+//   音量行是快捷键带出来的临时焦点，不是用户主动上下选中的一行。档位动得了
+//   就调音量（有可见变化），动不了就回到主路径启动 ROM，保证按下去一定有反应。
+static bool game_page_activate_focused_item()
+{
+    if (game_page_volume_focused()) {
+        if (game_page_volume_step_up()) {
+            ESP_LOGI(TAG, BUTTON_GAME_VOLUME_UP_LOG);
+            return true;
+        }
+        ESP_LOGW(TAG, "volume at max while focused, fall through to start");
+    }
+    if (game_page_start_selected()) {
+        ESP_LOGI(TAG, BUTTON_GAME_START_LOG);
+        return true;
+    }
+    return false;
+}
+
 void poll_gamepad_in_game_list(TickType_t now)
 {
     static int         dir_was = 0;      // -1 上 / 0 无 / +1 下
@@ -272,14 +301,7 @@ void poll_gamepad_in_game_list(TickType_t now)
 
     if (launch && !launch_was) {
         launch_was = true;
-        if (game_page_volume_focused()) {
-            // A/B 落在音量行上和 KEY 短按同义：音量 +1 档。
-            if (game_page_volume_step_up()) {
-                ESP_LOGI(TAG, BUTTON_GAME_VOLUME_UP_LOG);
-            }
-        } else if (game_page_start_selected()) {
-            ESP_LOGI(TAG, BUTTON_GAME_START_LOG);
-        }
+        game_page_activate_focused_item();
         notify_ui_task();
         // 启动成功的话下一轮就进模拟器分支了，别把这一帧的方向键继续往下喂。
         dir_was = up ? -1 : (down ? 1 : 0);
@@ -757,13 +779,7 @@ void button_task(void *)
                 // 焦点在音量行时是「音量 +1 档」（越过最大档回绕到静音），
                 // 否则是「开始/继续游戏」。
                 if (button_press_is_short(now - key_pressed_since)) {
-                    if (game_page_volume_focused()) {
-                        if (game_page_volume_step_up()) {
-                            ESP_LOGI(TAG, BUTTON_GAME_VOLUME_UP_LOG);
-                        }
-                    } else if (game_page_start_selected()) {
-                        ESP_LOGI(TAG, BUTTON_GAME_START_LOG);
-                    }
+                    game_page_activate_focused_item();
                     // 调音量也要刷新：档位变化是格子填充数的变化，不 notify
                     // 的话墨水屏会停在旧档位上。
                     notify_ui_task();
