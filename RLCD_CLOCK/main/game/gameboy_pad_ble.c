@@ -153,6 +153,10 @@ static hid_map_info_t s_hid;
 static bool           s_hid_tried;
 static bool           s_hid_path_logged;      // "hid path:" 首帧日志只打一次
 static bool           s_hid_nofield_logged;   // "没有可用字段"的降级日志只打一次
+// 「描述符认不出这一包」的计数。上限 8 条：这种包如果成批出现会把日志刷爆，
+// 而"按键偶尔失效"只需要知道**有没有**和**大概几次**，不需要逐包清单。
+// 每次连接重置（见 pad_on_disconnect 附近那批清零）。
+static uint8_t        s_hid_drop_logged;
 
 // 配对（加密）状态。连上之后先发起配对，等 ENC_CHANGE 到了再做 GATT 发现。
 // s_sec_since_ms 是发起配对的时刻，用于「ENC_CHANGE 迟迟不来」的兜底超时。
@@ -1064,21 +1068,34 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
                      (unsigned)PAD_HAT_MAX_DISTINCT);
         }
     } else if (hat_trusted) {
-        if (hat_dir >= 0 && hat_dir != 8) {
-            pad_desc_mark(covered, pressed, desc_live, GB_BTN_UP,
-                          (int)PAD_BIND_UP,
-                          hat_dir == 0 || hat_dir == 1 || hat_dir == 7);
-            pad_desc_mark(covered, pressed, desc_live, GB_BTN_RIGHT,
-                          (int)PAD_BIND_RIGHT,
-                          hat_dir == 1 || hat_dir == 2 || hat_dir == 3);
-            pad_desc_mark(covered, pressed, desc_live, GB_BTN_DOWN,
-                          (int)PAD_BIND_DOWN,
-                          hat_dir == 3 || hat_dir == 4 || hat_dir == 5);
-            pad_desc_mark(covered, pressed, desc_live, GB_BTN_LEFT,
-                          (int)PAD_BIND_LEFT,
-                          hat_dir == 5 || hat_dir == 6 || hat_dir == 7);
-        }
-        // dir == 8（居中）：什么都不写，保持已清零的状态。
+        // ⚠ 居中这一包**也必须**把四个方向标成"有结论"。
+        //
+        // 原来整段包在 `dir != 8` 里，于是"松开方向键"的那一包四个方向的
+        // covered 全是 false。而绑定表正是靠 covered 让路的（见 pad_handle_report
+        // 里那段），结果就是：描述符刚判完"松开了"的这一包，被一条陈年绑定又
+        // 按了回去。
+        //
+        // 同一个键两套判据——按下时描述符说了算、松开时绑定说了算——正是
+        // 「方向键时不时失效 / 时不时卡住」的形状：它取决于那条绑定当年记的
+        // expect 是碰巧等于居中值、还是碰巧不等于。而绑定的 expect 是用户当年
+        // 按一下抓出来的，抓在斜方向上、抓在旧固件下、抓在换过模式的 report
+        // 上，都会留下一个"有时对有时不对"的判据。
+        //
+        // 有 hat 字段的设备，方向键的结论一律以 hat 为准：居中就是四个都松开，
+        // 绑定表彻底不参与。hat_dir 为 -1（本包没有非居中的 hat）时同样四个
+        // 都是 false，语义一致。
+        const bool up_on    = (hat_dir == 0 || hat_dir == 1 || hat_dir == 7);
+        const bool right_on = (hat_dir == 1 || hat_dir == 2 || hat_dir == 3);
+        const bool down_on  = (hat_dir == 3 || hat_dir == 4 || hat_dir == 5);
+        const bool left_on  = (hat_dir == 5 || hat_dir == 6 || hat_dir == 7);
+        pad_desc_mark(covered, pressed, desc_live, GB_BTN_UP,
+                      (int)PAD_BIND_UP, up_on);
+        pad_desc_mark(covered, pressed, desc_live, GB_BTN_RIGHT,
+                      (int)PAD_BIND_RIGHT, right_on);
+        pad_desc_mark(covered, pressed, desc_live, GB_BTN_DOWN,
+                      (int)PAD_BIND_DOWN, down_on);
+        pad_desc_mark(covered, pressed, desc_live, GB_BTN_LEFT,
+                      (int)PAD_BIND_LEFT, left_on);
     } else {
         // ---- 方向键兜底：只用轴 ----
         //
@@ -1617,6 +1634,20 @@ static void pad_handle_report(const uint8_t *data, uint16_t len)
             //   只在**收到报文时**才执行 —— 垃圾按键会一直挂到用户下次按键为止，
             //   表现就是"玩着玩着角色自己动起来"或者"按什么都没反应"。
             //   描述符在手的设备，认不出这一包就当没按，比瞎猜安全得多。
+            //
+            // ⚠ 但"当没按"是有代价的：pad_clear_buttons() 已经把上一帧全清了，
+            //   于是这一包等于把用户**正按着**的键也一起抹掉。对静置时一包都
+            //   不发的手柄（Q36 实测 150 秒 0 包）更糟——下一包要等到用户下次
+            //   按键才来，中间没有任何自愈机会，用户看到的就是"这一下没进去"。
+            //   所以这里必须留痕：再报"按键偶尔失效"时，先数这一行有没有出现。
+            if (s_hid_drop_logged < 8u) {
+                ++s_hid_drop_logged;
+                ESP_LOGW(PAD_TAG,
+                         "hid path dropped report #%u (len=%u first=0x%02x "
+                         "rid_mode=%d); keys cleared this frame",
+                         (unsigned)s_hid_drop_logged, (unsigned)len,
+                         (unsigned)data[0], s_report_mode);
+            }
             pad_bind_update_live_desc(NULL);
         }
     } else {
@@ -2504,6 +2535,7 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
         s_hid.has_report_id = false;
         s_hid_path_logged = false;
         s_hid_nofield_logged = false;
+        s_hid_drop_logged = 0;
         // 原始报文转储：不复位的话，新连接的第一包会被判成"和上一台设备
         // 的最后一包内容相同"而不打印，恰好漏掉最该看的那一条。
         s_last_dump_len = 0;
