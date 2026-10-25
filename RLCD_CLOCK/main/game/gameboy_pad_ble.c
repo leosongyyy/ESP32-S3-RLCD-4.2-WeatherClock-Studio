@@ -408,6 +408,9 @@ static bool     s_hat_frozen;        // 校准窗口已过，锚点不再改动
 #define PAD_HAT_MIN_TRANSITIONS  1
 static bool s_hat_ready;
 
+// 校准收敛时把中位落盘（定义在本文件后半部分，pad_apply_descriptor() 要用）。
+static void pad_hat_nvs_save(uint8_t anchor, uint8_t rid);
+
 // 校准窗口：凑够这么多条转移边就锁死锚点。8 条边在选 ROM 那几下上下键里就能
 // 凑齐，用户基本察觉不到校准过程。
 #define PAD_HAT_CALIB_TRANSITIONS 8
@@ -920,6 +923,9 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
                               PAD_HAT_CALIB_WINDOW_MS));
                     if (enough_edges) {
                         s_hat_frozen = true;
+                        // 结论收敛了才落盘。写的是中位原始值，下次连上直接
+                        // 套用，用户不用再"先按一下没反应"地校准一遍。
+                        pad_hat_nvs_save((uint8_t)s_hat_anchor_raw, rid);
                         ESP_LOGI(PAD_TAG,
                                  "hat anchor locked raw=%u deg=%u cnt=%u "
                                  "(trans=%u, %u ms)",
@@ -1207,6 +1213,111 @@ static void pad_dump_bind_table(void);
 //   1. pad_on_report_map() 末尾（读完立刻解析）—— 主要路径；
 //   2. pad_handle_report() 开头 —— 兜底。描述符读取比第一包报文晚时（GATT 读
 //      是在订阅成功之后才发起的）由它补上，靠 s_hid_tried 去重。
+
+// ---------------------------------------------------------------- 中位持久化
+//
+// 每次重连都重新"校准"一次中位，代价是**连上后第一次按方向键没反应** —— 判定
+// 至少要一条转移边，也就是得等用户松开一次才生效。
+//
+// 但中位是设备固件的编码约定，不是随会话变化的状态，跟音量档位一样该落盘。
+// 这一点上 Android/Linux 就是范本：它们不在运行期去适配设备，而是给每个型号
+// 维护一份声明式映射 —— Generic.kl 打底，不规矩的另开
+// Vendor_xxxx_Product_yyyy.kl。我们这里存的就是那份"设备专属覆盖"。
+//
+// ⚠ 设备身份**不能**用蓝牙地址：Q36 每次开机广播地址的末位都会变（已实测
+//   03:25:00:33:35:bd → ...be），按地址存等于每次都 miss。改用 HID 报告描述
+//   符的长度 + 字节和：同一型号恒定，换一台手柄几乎必然不同。
+#define PAD_HAT_NVS_KEY   "hat"
+#define PAD_HAT_NVS_BLOB  8
+
+static uint32_t pad_map_sum(void)
+{
+    uint32_t sum = 0;
+    for (uint16_t i = 0; i < s_map_len; ++i) {
+        sum += s_map[i];
+    }
+    return sum;
+}
+
+// 描述符解析成功后调用：命中存档就直接套用，本次不再校准。
+static void pad_hat_nvs_load(void)
+{
+    nvs_handle_t h = 0;
+    if (nvs_open(PAD_PEER_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+        return;                         // 还没存过，走正常校准
+    }
+    uint8_t blob[PAD_HAT_NVS_BLOB] = { 0 };
+    size_t len = sizeof(blob);
+    const esp_err_t err = nvs_get_blob(h, PAD_HAT_NVS_KEY, blob, &len);
+    nvs_close(h);
+    if (err != ESP_OK || len != sizeof(blob)) {
+        return;
+    }
+    const uint32_t map_len = (uint32_t)blob[0] | ((uint32_t)blob[1] << 8);
+    const uint32_t map_sum = (uint32_t)blob[2] | ((uint32_t)blob[3] << 8) |
+                             ((uint32_t)blob[4] << 16) |
+                             ((uint32_t)blob[5] << 24);
+    const uint8_t rid    = blob[6];
+    const uint8_t anchor = blob[7];
+
+    if (map_len != (uint32_t)s_map_len || map_sum != pad_map_sum()) {
+        ESP_LOGI(PAD_TAG, "hat cache: report map differs, calibrating");
+        return;
+    }
+    // 描述符里必须真有这个 report 的 hat 字段，否则这份存档对不上当前布局
+    // （换了同型号的新固件、或者当初存的时候布局就不同）。
+    bool found = false;
+    for (uint16_t i = 0; i < s_hid.field_count; ++i) {
+        const hid_field_t *f = &s_hid.fields[i];
+        if (f->report_id == rid && f->kind == (uint8_t)HID_FIELD_HAT) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        ESP_LOGW(PAD_TAG, "hat cache: no hat field on rid=%u, ignored",
+                 (unsigned)rid);
+        return;
+    }
+    s_hat_anchor_raw = anchor;
+    s_hat_ready = true;
+    // ⚠ 刻意**不**置 frozen：留着让 hat_resolve_center() 继续观察。存档万一
+    //   不对（手柄换了模式但描述符照旧），用户按两下就会被纠正，而不是一路
+    //   错到断电 —— hat_resolve_center() 是确定性的，不会像老版统计量那样漂。
+    ESP_LOGI(PAD_TAG, "hat cache hit: anchor=%u (rid=%u, map=%u bytes)",
+             (unsigned)anchor, (unsigned)rid, (unsigned)map_len);
+}
+
+// 校准收敛（frozen）时调用：这时结论已经受过足够多转移边的检验。
+static void pad_hat_nvs_save(uint8_t anchor, uint8_t rid)
+{
+    uint8_t blob[PAD_HAT_NVS_BLOB] = { 0 };
+    const uint32_t map_len = (uint32_t)s_map_len;
+    const uint32_t map_sum = pad_map_sum();
+    blob[0] = (uint8_t)(map_len & 0xFFu);
+    blob[1] = (uint8_t)((map_len >> 8) & 0xFFu);
+    blob[2] = (uint8_t)(map_sum & 0xFFu);
+    blob[3] = (uint8_t)((map_sum >> 8) & 0xFFu);
+    blob[4] = (uint8_t)((map_sum >> 16) & 0xFFu);
+    blob[5] = (uint8_t)((map_sum >> 24) & 0xFFu);
+    blob[6] = rid;
+    blob[7] = anchor;
+
+    nvs_handle_t h = 0;
+    if (nvs_open(PAD_PEER_NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGW(PAD_TAG, "hat cache not persisted: nvs open failed");
+        return;
+    }
+    esp_err_t err = nvs_set_blob(h, PAD_HAT_NVS_KEY, blob, sizeof(blob));
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    if (err != ESP_OK) {
+        ESP_LOGW(PAD_TAG, "hat cache not persisted: %d", (int)err);
+    }
+}
+
 static void pad_hid_try_parse(void)
 {
     if (s_hid_tried || !s_map_done || s_map_len == 0u) {
@@ -1357,6 +1468,9 @@ static void pad_hid_try_parse(void)
         }
         ESP_LOGI(PAD_TAG, "bind check: %u kept, %u discarded",
                  kept, discarded);
+
+        // 描述符已经解析好，这时才认得"这台设备长什么样"，可以查中位存档了。
+        pad_hat_nvs_load();
     }
 
     // 每次连接都把完整绑定明细打一遍：上面清洗完了什么、留下了什么，一条日志

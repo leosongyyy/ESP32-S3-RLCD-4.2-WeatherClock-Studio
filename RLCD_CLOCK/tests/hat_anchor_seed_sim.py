@@ -248,6 +248,21 @@ def main():
         {2},
         "只有「下」那一包应判出下")
 
+    # 8. 存档命中（中位已从 NVS 恢复）：连上第一包就该出「下」
+    print("\n[8] 存档命中（s_hat_ready 开局即为真）—— 第一包就要能出下")
+    print("    这是把中位持久化到 NVS 的唯一目的：免掉「先按一下没反应」")
+    dec = HatDecoder(resolve_center)
+    dec.ready = True            # pad_hat_nvs_load() 的效果
+    dec.anchor = CENTER
+    dec.have_anchor = True
+    seq = seq_of(DOWN, CENTER, DOWN)
+    got = {i for i, (r, t) in enumerate(seq) if is_down(dec.feed(r, t))}
+    ok = got == {0, 2}
+    print(f"    [{'PASS' if ok else 'FAIL'}] {'存档命中':14s} 下出现在 {sorted(got)}"
+          + ("" if ok else "  期望 [0, 2]"))
+    if not ok:
+        fails += 1
+
     print("\n" + "=" * 66)
     if fails:
         print(f"结果：{fails} 项未通过")
