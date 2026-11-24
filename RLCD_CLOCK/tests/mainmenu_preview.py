@@ -37,6 +37,7 @@ FONT = {
     'W': (0x11,0x11,0x11,0x15,0x15,0x1B,0x11), 'X': (0x11,0x11,0x0A,0x04,0x0A,0x11,0x11),
     'Y': (0x11,0x11,0x0A,0x04,0x04,0x04,0x04), 'Z': (0x1F,0x01,0x02,0x04,0x08,0x10,0x1F),
     ':': (0x00,0x04,0x04,0x00,0x04,0x04,0x00), '-': (0x00,0x00,0x00,0x0E,0x00,0x00,0x00),
+    '°': (0x06,0x09,0x06,0x00,0x00,0x00,0x00),
     '/': (0x01,0x02,0x02,0x04,0x08,0x08,0x10), '%': (0x19,0x1A,0x02,0x04,0x08,0x0B,0x13),
     '.': (0x00,0x00,0x00,0x00,0x00,0x0C,0x0C), '!': (0x04,0x04,0x04,0x04,0x04,0x00,0x04),
     ' ': (0x00,)*7,
@@ -113,29 +114,52 @@ def vline(x, y0, y1, c=INK):
 
 
 # ---------- 顶部状态栏 ----------
+# 按原截图：6 个模块等宽分散（时间/温度/湿度/WiFi/蓝牙/电量），竖线分隔。
 STATUS_H = 22
-text5(6, 6, "09:41", scale=2)
-vline(72, 2, STATUS_H - 2)
-# 图标放大到 18px 并加粗：15px 在 1bit 电子纸上线条只剩 1px，等于没画
-img.paste(lr.icon("thermometer", 18, stroke=1.35), (78, 2))
-text5(98, 6, "26C", scale=1)
-vline(121, 2, STATUS_H - 2)
-img.paste(lr.icon("droplet", 18, stroke=1.35), (127, 2))
-text5(147, 6, "45%", scale=1)
-vline(170, 2, STATUS_H - 2)
-img.paste(lr.icon("wifi", 18, stroke=1.35), (176, 2))
-img.paste(lr.icon("bluetooth", 18, stroke=1.35), (200, 2))
-# 电池电量用原版格子样式（与底部按键栏同款），放右端
-BX, BY = 344, 5
-frame(BX, BY, BX + 24, BY + 12)
-rect(BX + 25, BY + 4, BX + 27, BY + 8)
+SLOTS = 6
+SW = W // SLOTS          # 每格 66px，模块各自居中
+slot_cx = lambda i: i * SW + SW // 2
+
+# 时间：占满第一格，收紧 pitch 给分隔线留出空隙
+text5(6, 6, "09:41", scale=2, pitch=11)
+vline(SW, 2, STATUS_H - 2)
+
+# 温度：18px 图标 + 26°C（15px 在 1bit 下只剩 1px 线宽，等于没画）
+cx = slot_cx(1)
+img.paste(lr.icon("thermometer", 18, stroke=1.35), (cx - 20, 2))
+text5(cx + 1, 6, "26°C", pitch=5)
+vline(SW * 2, 2, STATUS_H - 2)
+
+# 湿度
+cx = slot_cx(2)
+img.paste(lr.icon("droplet", 18, stroke=1.35), (cx - 20, 2))
+text5(cx + 1, 6, "45%", pitch=5)
+vline(SW * 3, 2, STATUS_H - 2)
+
+# WiFi + 连接小圆点
+cx = slot_cx(3)
+img.paste(lr.icon("wifi", 18, stroke=1.35), (cx - 12, 2))
+d.ellipse((cx + 8, 1, cx + 14, 7), fill=INK)
+vline(SW * 4, 2, STATUS_H - 2)
+
+# 蓝牙 + 连接小圆点
+cx = slot_cx(4)
+img.paste(lr.icon("bluetooth", 18, stroke=1.35), (cx - 10, 2))
+d.ellipse((cx + 9, 1, cx + 15, 7), fill=INK)
+vline(SW * 5, 2, STATUS_H - 2)
+
+# 电池电量：原版格子样式，占第六格
+cx = slot_cx(5)
+bx = cx - 24
+frame(bx, 5, bx + 24, 17)
+rect(bx + 25, 9, bx + 27, 13)
 for k in range(4):
-    bx = BX + 2 + k * 5
+    qx = bx + 2 + k * 5
     if k < 3:
-        rect(bx, BY + 2, bx + 3, BY + 10)
+        rect(qx, 7, qx + 3, 15)
     else:
-        frame(bx, BY + 2, bx + 3, BY + 10)
-text5(BX + 32, BY + 3, "75%", scale=1)
+        frame(qx, 7, qx + 3, 15)
+text5(bx + 31, 8, "75%", pitch=5)
 hline(0, W - 1, STATUS_H)
 
 # ---------- 标题栏 ----------
