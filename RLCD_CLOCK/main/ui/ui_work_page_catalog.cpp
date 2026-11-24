@@ -456,6 +456,30 @@ int next_enabled_work_page(int current_page)
                : kFallbackWorkPage;
 }
 
+int prev_enabled_work_page(int current_page)
+{
+    // 用 next 走一圈找到前驱：next(page)==current 的那个启用页。
+    // 只有 8 个页面，最多 8 步，开销可忽略；不碰工作页顺序策略层。
+    const uint8_t page_mask = work_page_enabled_mask_load();
+    uint8_t order[kWorkPageCount] = {};
+    if (!copy_normalized_work_page_order(order, sizeof(order), page_mask)) {
+        return kFallbackWorkPage;
+    }
+    int page = current_page;
+    if (!work_page_order_policy::is_work_page(page)) {
+        page = order[work_page_order_policy::first_enabled_index(
+            order, sizeof(order), page_mask)];
+    }
+    for (int step = 0; step < kWorkPageCount; ++step) {
+        const int next = next_enabled_work_page(page);
+        if (next == current_page) {
+            return page;
+        }
+        page = next;
+    }
+    return current_page;
+}
+
 int first_enabled_work_page_order_index()
 {
     const uint8_t page_mask = work_page_enabled_mask_load();

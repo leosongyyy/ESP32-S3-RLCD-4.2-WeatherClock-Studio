@@ -84,7 +84,8 @@ lv_obj_t *build_work_page_root(int page)
 }
 
 static_assert(kFallbackWorkPage == kWorkPageWeatherClock, "special-mode fallback page must remain weather clock");
-static_assert(kAuxPageRootCount == 3, "auxiliary roots are info, network diagnostics and settings");
+static_assert(kAuxPageRootCount == 4,
+              "auxiliary roots are info, network diagnostics, settings and main menu");
 static_assert(kPageRootW > 0 && kPageRootH > 0, "page root size must be positive");
 static_assert(kLowerPanelObjectCapacity > 0, "lower panel object storage must not be empty");
 } // namespace

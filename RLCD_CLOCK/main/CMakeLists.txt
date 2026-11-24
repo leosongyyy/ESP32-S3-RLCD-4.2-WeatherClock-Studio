@@ -59,6 +59,7 @@ idf_component_register(
         "ui/ui_flip_sensor_mood.cpp"
         "ui/ui_game.cpp"
         "ui/ui_game_bind.cpp"
+        "ui/ui_main_menu.cpp"
         "ui/ui_calendar.cpp"
         "ui/ui_calendar_layout.cpp"
         "ui/ui_weather_board.cpp"

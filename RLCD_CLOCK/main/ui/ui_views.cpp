@@ -15,6 +15,7 @@
 #include "battery_runtime_state.h"
 #include "chime_runtime_state.h"
 #include "daily_saying_state.h"
+#include "engine_api.h"         // 主菜单自动回连蓝牙手柄（引擎层唯一 API 面）
 #include "local_sensor_state.h"
 #include "input_button_config.h"
 #include "lvgl_bsp.h"
@@ -32,6 +33,7 @@
 #include "ui_game.h"
 #include "ui_info_page_state_internal.h"
 #include "ui_loop_schedule.h"
+#include "ui_main_menu.h"
 #include "ui_runtime_schedule.h"
 #include "ui_setup_status.h"
 #include "ui_status_refresh_policy.h"
@@ -64,6 +66,7 @@ enum class VisibleAuxiliaryPage {
     kSystemInfo,
     kNetworkDiagnostics,
     kSettings,
+    kMainMenu,
 };
 
 static_assert(kUiInfoPageOtaFallbackPollMs > 0,
@@ -235,6 +238,32 @@ void ui_task(void *)
             // 顺便处理横幅自动消失。必须在锁内。
             const bool guard_changed = game_page_guard_tick_ui();
             bool refresh_now = guard_changed;
+
+            // 主菜单主页：独占这一帧，画好时间/电量后进入等待。
+            // 选模块后由输入任务 main_menu_hide() + notify 唤醒，回到工作页流程。
+            if (main_menu_shown() && !battery.low_battery_mode &&
+                !runtime_surfaces.setup_portal_active) {
+                // 主菜单常驻时拉起手柄服务并保持可见：pad service 在可见期间
+                // 会自动 pad_start() 扫描并回连已绑定的手柄，状态栏蓝牙圆点
+                // 随 pad_state 变亮。离开主菜单后由服务自身的宽限超时停扫省电。
+                pad_service_ensure();
+                pad_service_notify_visible();
+                build_main_menu_ui();
+                if (main_menu_root() &&
+                    visible_auxiliary_page != VisibleAuxiliaryPage::kMainMenu) {
+                    show_page(main_menu_root());
+                    visible_auxiliary_page = VisibleAuxiliaryPage::kMainMenu;
+                }
+                int menu_battery = battery_snapshot_valid ? battery.percent : -1;
+                if (update_main_menu(cached_local_valid ? &local : nullptr,
+                                     menu_battery)) {
+                    refresh_now = true;
+                }
+                if (refresh_now) lv_refr_now(nullptr);
+                Lvgl_unlock();
+                (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+                continue;
+            }
             bool info_requested = runtime_surfaces.info_requested;
             InfoPageStateSnapshot info_state = {};
             OtaRuntimeTimingSnapshot info_ota = {};
@@ -275,6 +304,11 @@ void ui_task(void *)
                 invalidate_clock_time_draw_cache();
                 refresh_now = true;
             };
+            // 从主页进入工作页后，需要主动显示目标工作页。
+            if (visible_auxiliary_page == VisibleAuxiliaryPage::kMainMenu) {
+                visible_auxiliary_page = VisibleAuxiliaryPage::kNone;
+                restore_active_work_page_after_aux(false);
+            }
             if (mode_due && battery.low_battery_mode &&
                 !low_battery_resume_pending) {
                 low_battery_resume_page = active_page;

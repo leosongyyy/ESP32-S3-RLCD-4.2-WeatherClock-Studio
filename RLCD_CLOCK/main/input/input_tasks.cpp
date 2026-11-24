@@ -18,6 +18,7 @@
 #include "ui_game.h"
 #include "ui_game_bind.h"
 #include "ui_info_page_state.h"
+#include "ui_main_menu.h"
 #include "ui_settings_activity_state.h"
 #include "ui_settings_feedback.h"
 #include "ui_settings_navigation.h"
@@ -95,6 +96,58 @@ constexpr TickType_t kGamepadRepeatNextTicks = pdMS_TO_TICKS(kGamepadRepeatNextM
 constexpr TickType_t kBootDoubleClickTicks = pdMS_TO_TICKS(kBootDoubleClickMs);
 constexpr const char *kSettingsBusyFeedbackText = "请等待操作完成";
 TaskNotificationTarget s_button_task_target;
+
+// 主菜单选「设置」时复用现有入口；其定义在本文件后段。
+void enter_settings_primary_menu(TickType_t now);
+
+// 按键时长判据，定义在本文件后段；手柄全局导航会提前用到。
+bool button_press_is_short(TickType_t held);
+bool button_press_is_long(TickType_t held);
+
+// 设置页返回动作，定义在本文件后段；手柄全局导航的 B 键会提前用到。
+void handle_settings_key_long_or_busy();
+
+// 从任何子页面回到主菜单主页。必须清掉辅助页请求，否则退出主页那一帧
+// 会被残留的 settings/info/network_diag/bind 状态重新抢回对应页面。
+// 当前工作页保持不变，主页只是覆盖在它上面；下次从主页选模块会显式重设。
+void return_to_main_menu()
+{
+    if (game_bind_page_active()) {
+        game_bind_page_close();
+    }
+    if (settings_page_requested()) {
+        settings_page_clear();
+    }
+    if (info_page_requested()) {
+        info_page_clear();
+    }
+    if (network_diag_page_requested()) {
+        network_diag_page_clear();
+    }
+    main_menu_show();
+    notify_ui_task();
+    ESP_LOGI(TAG, "return to main menu");
+}
+
+// 执行主菜单当前选中项。返回 true 表示进入了模块（主页应收起）。
+// 未实现的空模块返回 false，留在主页，避免按一下就掉回工作页。
+bool activate_main_menu_selection(TickType_t now)
+{
+    const MainMenuAction action = main_menu_current_action();
+    if (action == MainMenuAction::kWeatherClock) {
+        active_work_page_store(kWorkPageWeatherClock);
+    } else if (action == MainMenuAction::kGameBoy) {
+        active_work_page_store(kWorkPageGameBoy);
+    } else if (action == MainMenuAction::kSettings) {
+        enter_settings_primary_menu(now);
+    } else {
+        return false;  // kNone，空模块
+    }
+    main_menu_hide();
+    notify_ui_task();
+    return true;
+}
+
 // 退出游戏后吞掉「这次松开」：退出那一刻用户两个键都按着，手指还没抬起来。
 // 不吞的话，主循环会在同一个按键周期里把 boot_pressed_since 重新赋成 now，
 // 松手时 held 只有几百毫秒 → 判成短按 → BOOT 立刻换 ROM、KEY 立刻重启游戏，
@@ -289,12 +342,38 @@ void poll_gamepad_in_game_list(TickType_t now)
     static TickType_t  repeat_at = 0;
     static bool        left_was = false;
     static bool        right_was = false;
+    static bool        shoulder_home_was = false;
+
+    // LB+RB 同按 → 回主菜单（边沿），与全局导航页一致。
+    const bool shoulder_home = pad_shoulders() == 0x03;
+    if (shoulder_home && !shoulder_home_was) {
+        ESP_LOGI(TAG, "gamepad LB+RB: return to main menu");
+        return_to_main_menu();
+        shoulder_home_was = true;
+        return;
+    }
+    shoulder_home_was = shoulder_home;
+    if (shoulder_home) return;
 
     const bool up = pad_button(GB_BTN_UP);
     const bool down = pad_button(GB_BTN_DOWN);
-    const bool launch = pad_button(GB_BTN_A) || pad_button(GB_BTN_B);
+    const bool launch = pad_button(GB_BTN_A);   // A = 确认/启动
+    const bool back = pad_button(GB_BTN_B);     // B = 返回主菜单
     const bool left = pad_button(GB_BTN_LEFT);
     const bool right = pad_button(GB_BTN_RIGHT);
+
+    // B = 返回主菜单（边沿触发）
+    static bool back_was = false;
+    if (back && !back_was) {
+        return_to_main_menu();
+        back_was = true;
+        // 下一帧主菜单会接手，本帧不再往下喂方向键。
+        dir_was = 0;
+        left_was = left;
+        right_was = right;
+        return;
+    }
+    back_was = back;
 
     if (launch && !launch_was) {
         launch_was = true;
@@ -357,6 +436,166 @@ void poll_gamepad_in_game_list(TickType_t now)
         }
         notify_ui_task();
     }
+}
+
+// 手柄全局导航（工作页 / 设置页 / 信息页通用，游戏 ROM 列表页除外）。
+// 语义对齐用户要求：
+//   肩键 LB+RB 同时按(边沿) = 回主菜单（最高优先级，所有非游戏运行页生效）
+//   上/下(边沿+连发)        = 选单移动（设置页选焦点，其它页切工作页）
+//   左/右 短按(边沿)        = 选单移动（同上）
+//   左/右 长按(按住到阈值)  = 切工作页（next/prev）
+//   A(边沿)                = 确认
+//   B(边沿)                = 返回
+//
+// 只在 pad READY、且不在游戏运行/游戏绑定页/主菜单时由调用方调用。
+// 返回 true 表示本帧确实处理了手柄输入（调用方据此 notify UI）。
+bool poll_gamepad_global_nav(TickType_t now)
+{
+    if (pad_state() != PAD_STATE_READY) return false;
+    bool acted = false;
+
+    // LB+RB 同按 → 回主菜单。只在边沿触发，避免长按连发。
+    static bool shoulder_home_was = false;
+    const bool shoulder_home = pad_shoulders() == 0x03;
+    if (shoulder_home && !shoulder_home_was) {
+        ESP_LOGI(TAG, "gamepad LB+RB: return to main menu");
+        return_to_main_menu();
+        shoulder_home_was = true;
+        return true;
+    }
+    shoulder_home_was = shoulder_home;
+    if (shoulder_home) return false;   // 按住肩键期间吞掉其它方向，避免误触
+
+    const bool pad_up = pad_button(GB_BTN_UP);
+    const bool pad_down = pad_button(GB_BTN_DOWN);
+    const bool pad_left = pad_button(GB_BTN_LEFT);
+    const bool pad_right = pad_button(GB_BTN_RIGHT);
+    const bool pad_a = pad_button(GB_BTN_A);
+    const bool pad_b = pad_button(GB_BTN_B);
+
+    const bool in_settings = settings_page_requested();
+
+    // ---- 左右：短按移选单，长按切页 ----
+    static int  lr_dir = 0;              // -1 左 / +1 右 / 0 松开
+    static TickType_t lr_since = 0;      // 本方向按下的时刻
+    static bool lr_long_done = false;    // 本方向长按是否已触发
+    static bool lr_short_played = false; // 本方向短按是否已触发
+    const int lr = pad_right ? 1 : (pad_left ? -1 : 0);
+    if (lr == 0) {
+        lr_dir = 0;
+    } else if (lr != lr_dir) {
+        lr_dir = lr;
+        lr_since = now;
+        lr_long_done = false;
+        lr_short_played = false;
+    } else {
+        const TickType_t held = now - lr_since;
+        if (!lr_long_done && button_press_is_long(held)) {
+            // 长按：切工作页（右=下一页，左=上一页）
+            const int target = lr > 0 ? next_enabled_work_page(active_work_page_load())
+                                      : prev_enabled_work_page(active_work_page_load());
+            active_work_page_store(target);
+            ESP_LOGI(TAG, BUTTON_SWITCH_WORK_PAGE_LOG_FORMAT, target + 1);
+            lr_long_done = true;
+            acted = true;
+        } else if (!lr_long_done && !lr_short_played &&
+                   button_press_is_short(held)) {
+            // 短按：设置页移选单；其它页等同切一页
+            if (in_settings) {
+                handle_settings_key_short();
+            } else {
+                const int target = lr > 0 ? next_enabled_work_page(active_work_page_load())
+                                          : prev_enabled_work_page(active_work_page_load());
+                active_work_page_store(target);
+                ESP_LOGI(TAG, BUTTON_SWITCH_WORK_PAGE_LOG_FORMAT, target + 1);
+            }
+            lr_short_played = true;
+            acted = true;
+        }
+    }
+    // 松开时若既没短按也没长按触发过（极短一帧），补一次短按，防止漏键。
+    if (lr == 0 && lr_dir != 0 && !lr_long_done && !lr_short_played) {
+        if (in_settings) {
+            handle_settings_key_short();
+        }
+        acted = acted || in_settings;
+    }
+    if (lr == 0) {
+        lr_long_done = false;
+        lr_short_played = false;
+    }
+
+    // ---- 上下：边沿触发选单移动，带连发 ----
+    static int  ud_dir = 0;
+    static TickType_t ud_repeat_at = 0;
+    static bool ud_repeating = false;
+    const int ud = pad_down ? 1 : (pad_up ? -1 : 0);
+    bool ud_act = false;
+    if (ud == 0) {
+        ud_repeat_at = 0;
+        ud_repeating = false;
+    } else if (ud != ud_dir) {
+        // 刚按下：立即走一步，第一次连发排在 kGamepadRepeatFirstMs 之后。
+        ud_act = true;
+        ud_repeat_at = now;
+        ud_repeating = false;
+    } else if (!ud_repeating && (TickType_t)(now - ud_repeat_at) >= kGamepadRepeatFirstTicks) {
+        ud_act = true;
+        ud_repeat_at = now + kGamepadRepeatNextTicks;
+        ud_repeating = true;
+    } else if (ud_repeating && (TickType_t)(now - ud_repeat_at) >= kGamepadRepeatNextTicks) {
+        ud_act = true;
+        ud_repeat_at = now + kGamepadRepeatNextTicks;
+    }
+    ud_dir = ud;
+    if (ud_act) {
+        if (in_settings) {
+            // 设置页只有一维选单，上/下都走 KEY 短按（下移一格）；
+            // 向上额外补一次，形成"上=倒数第二格"的近似（一维列表的取舍）。
+            handle_settings_key_short();
+            if (ud < 0) handle_settings_key_short();
+        } else {
+            // 普通工作页：上=上一页，下=下一页
+            const int target = ud > 0 ? next_enabled_work_page(active_work_page_load())
+                                      : prev_enabled_work_page(active_work_page_load());
+            active_work_page_store(target);
+            ESP_LOGI(TAG, BUTTON_SWITCH_WORK_PAGE_LOG_FORMAT, target + 1);
+        }
+        acted = true;
+    }
+
+    // ---- A = 确认 ----
+    static bool a_was = false;
+    const bool a_now = pad_a;
+    if (a_now && !a_was) {
+        if (in_settings) {
+            // 等同 BOOT 短按：触发当前项动作
+            settings_activity_record_action(now);
+        } else {
+            // 普通工作页：确认等同进设置（与物理 KEY 短按一致）
+            if (!settings_page_requested() && !info_page_requested() &&
+                !network_diag_page_requested() && !setup_portal_active_load()) {
+                enter_settings_primary_menu(now);
+            }
+        }
+        acted = true;
+    }
+    a_was = a_now;
+
+    // ---- B = 返回 ----
+    static bool b_was = false;
+    const bool b_now = pad_b;
+    if (b_now && !b_was) {
+        if (in_settings) {
+            handle_settings_key_long_or_busy();   // 设置页：返回上一级/退出
+        } else {
+            return_to_main_menu();                // 工作页：返回主页
+        }
+        acted = true;
+    }
+    b_was = b_now;
+
+    return acted;
 }
 
 bool button_press_is_short(TickType_t held)
@@ -432,6 +671,124 @@ void handle_bind_page_buttons(bool boot_pressed, bool key_pressed, TickType_t no
         }
         key_since = 0;
         key_exit_handled = false;
+    }
+}
+
+// 主菜单主页的按键语义（独吞这一轮，类似绑定页）：
+//   物理 BOOT 单击   = 右移一格，行优先循环，第一排末尾进第二排，末尾回第一格
+//   物理 BOOT 双击   = 打开手柄绑定页（保留原入口）
+//   物理 KEY  单击   = 左移一格，反向循环
+//   物理 KEY  双击   = 进入当前选中模块（空模块留在主页）
+//   物理 BOOT/KEY 长按 = 预留，当前无动作（回主页用 BOOT+KEY 双键）
+//   手柄 方向键      = 上下左右移动焦点（边沿触发，不连发）
+//   手柄 A/B         = 进入当前选中模块（边沿触发）
+// 两个物理键的单击都要等双击窗口过去才能结算，避免和双击语义抢。
+// 进入模块后由这里切到对应工作页 / 设置页，并 main_menu_hide() 唤醒 UI 任务。
+void handle_main_menu_buttons(bool boot_pressed, bool key_pressed, TickType_t now)
+{
+    static TickType_t boot_since = 0;
+    static TickType_t boot_pending_since = 0;   // BOOT 单击待结算时刻
+    static TickType_t boot_last_release = 0;
+    static bool boot_long_handled = false;
+    static TickType_t key_since = 0;
+    static TickType_t key_pending_since = 0;    // KEY 单击待结算时刻
+    static TickType_t key_last_release = 0;
+    static bool key_long_handled = false;
+    static bool pad_dir_was = false;
+    static bool pad_action_was = false;
+
+    // 双击窗口过去还没等到第二击 —— 单击结算。
+    // 按住期间不结算，避免「短按后又按下变长按」先移再误触。
+    if (boot_pending_since != 0 && !boot_pressed &&
+        (TickType_t)(now - boot_pending_since) > kBootDoubleClickTicks) {
+        boot_pending_since = 0;
+        main_menu_step(1);   // BOOT 单击右移
+    }
+    if (key_pending_since != 0 && !key_pressed &&
+        (TickType_t)(now - key_pending_since) > kBootDoubleClickTicks) {
+        key_pending_since = 0;
+        main_menu_step(-1);  // KEY 单击左移
+    }
+
+    // 手柄方向键：边沿触发一次，4 方向。
+    const bool pad_up = pad_state() == PAD_STATE_READY && pad_button(GB_BTN_UP);
+    const bool pad_down = pad_state() == PAD_STATE_READY && pad_button(GB_BTN_DOWN);
+    const bool pad_left = pad_state() == PAD_STATE_READY && pad_button(GB_BTN_LEFT);
+    const bool pad_right = pad_state() == PAD_STATE_READY && pad_button(GB_BTN_RIGHT);
+    const bool pad_dir = pad_up || pad_down || pad_left || pad_right;
+    if (pad_dir && !pad_dir_was) {
+        if (pad_up) main_menu_move(0, -1);
+        else if (pad_down) main_menu_move(0, 1);
+        else if (pad_left) main_menu_move(-1, 0);
+        else if (pad_right) main_menu_move(1, 0);
+    }
+    pad_dir_was = pad_dir;
+
+    const bool pad_action = pad_state() == PAD_STATE_READY &&
+                            (pad_button(GB_BTN_A) || pad_button(GB_BTN_B));
+    const bool action_edge = (pad_action && !pad_action_was);
+    pad_action_was = pad_action;
+
+    // 物理 BOOT：单击右移，双击进绑定页。长按预留无动作。
+    if (boot_pressed) {
+        if (boot_since == 0) {
+            boot_since = now;
+            boot_long_handled = false;
+            boot_pending_since = 0;
+        }
+    } else {
+        if (boot_since != 0 && !boot_long_handled &&
+            button_press_is_short(now - boot_since)) {
+            if (boot_last_release != 0 &&
+                (TickType_t)(now - boot_last_release) <= kBootDoubleClickTicks) {
+                boot_last_release = 0;
+                boot_pending_since = 0;
+                boot_since = 0;
+                // 绑定页是游戏工作页的子模式，先切到游戏页再开绑定页，
+                // 否则主菜单独占帧会把绑定页挡在后面。
+                active_work_page_store(kWorkPageGameBoy);
+                game_bind_page_open();
+                main_menu_hide();
+                notify_ui_task();
+                ESP_LOGI(TAG, BUTTON_GAME_BIND_OPEN_LOG);
+                return;
+            }
+            boot_last_release = now;
+            boot_pending_since = now;
+        }
+        boot_since = 0;
+        boot_long_handled = false;
+    }
+
+    // 物理 KEY：单击左移，双击确认进入当前模块。长按预留无动作。
+    if (key_pressed) {
+        if (key_since == 0) {
+            key_since = now;
+            key_long_handled = false;
+            key_pending_since = 0;
+        }
+    } else {
+        if (key_since != 0 && !key_long_handled &&
+            button_press_is_short(now - key_since)) {
+            if (key_last_release != 0 &&
+                (TickType_t)(now - key_last_release) <= kBootDoubleClickTicks) {
+                // 双击 KEY = 确认进入。
+                key_last_release = 0;
+                key_pending_since = 0;
+                key_since = 0;
+                // 空模块由 activate_main_menu_selection 内部留住主页，不 hide。
+                (void)activate_main_menu_selection(now);
+                return;
+            }
+            key_last_release = now;
+            key_pending_since = now;   // 单击先挂起，超时结算左移
+        }
+        key_since = 0;
+        key_long_handled = false;
+    }
+
+    if (action_edge) {
+        (void)activate_main_menu_selection(now);
     }
 }
 
@@ -596,6 +953,13 @@ void button_task(void *)
     // 双击 BOOT 要进绑定页，所以一次短按必须等过双击窗口才能确定它是单击。
     TickType_t boot_pending_since = 0;
 
+    // 全局回主页手势：BOOT + KEY 同时短按后一起松开 → 回到主菜单主页。
+    // 放在游戏运行分支之后：游戏中双键是暂停/退出，语义归模拟器。
+    // 放在主菜单与其它页面分支之前：双键手势优先，且按住期间吞掉单键语义，
+    // 避免同一轮又被当成 BOOT 换页 / KEY 确认。
+    static bool     home_chord_active = false;
+    static TickType_t home_chord_since = 0;
+
     for (;;) {
         runtime_health_record_current_task_stack(RegularAppTaskId::kButton);
         TickType_t now = xTaskGetTickCount();
@@ -605,6 +969,35 @@ void button_task(void *)
         // 游戏运行中：整块按键语义归模拟器，本任务只做手柄轮询。
         if (gameboy_runtime_running()) {
             poll_gamepad_while_running(boot_pressed, key_pressed, now);
+            vTaskDelay(pdMS_TO_TICKS(kGamepadPollMs));
+            continue;
+        }
+
+        // 双键同按状态机。只在非游戏运行态生效。
+        if (boot_pressed && key_pressed) {
+            if (!home_chord_active) {
+                home_chord_active = true;
+                home_chord_since = now;
+            }
+            // 双键按住期间吞掉所有单键语义。
+            vTaskDelay(pdMS_TO_TICKS(kButtonActivePollMs));
+            continue;
+        }
+        if (home_chord_active) {
+            home_chord_active = false;
+            const bool all_released = !boot_pressed && !key_pressed;
+            const bool was_short = button_press_is_short(now - home_chord_since);
+            vTaskDelay(pdMS_TO_TICKS(kButtonActivePollMs));
+            if (all_released && was_short) {
+                return_to_main_menu();
+            }
+            // 刚松开的这一帧也吞掉，不让残留的键触发单键动作。
+            continue;
+        }
+
+        // 主菜单主页：独吞这一轮按键（方向/确认/进入模块）。
+        if (main_menu_shown()) {
+            handle_main_menu_buttons(boot_pressed, key_pressed, now);
             vTaskDelay(pdMS_TO_TICKS(kGamepadPollMs));
             continue;
         }
@@ -646,15 +1039,27 @@ void button_task(void *)
             continue;
         }
 
-        // 停在 ROM 列表页且手柄已就绪时，本任务必须保持短周期轮询。
-        // 下面有两处会把任务挂进长眠分支，都得靠这个标志放开：
-        //   1) button_task_can_wait_for_edge() 之后是 ulTaskNotifyTake(portMAX_DELAY)，
-        //      只会被物理按键的 GPIO 边沿唤醒，手柄按到天亮也扫不到；
-        //   2) 末尾的 button_task_poll_delay_ms() 在墨水屏 idle 下是几百毫秒。
-        const bool gamepad_needs_poll =
-            game_idle_page && pad_state() == PAD_STATE_READY;
+        // 手柄就绪时本任务必须保持短周期轮询，否则下面两处长眠会把手柄按键
+        // 吞掉：1) ulTaskNotifyTake(portMAX_DELAY) 只等物理 GPIO 边沿；
+        //      2) 末尾 button_task_poll_delay_ms() 在墨水屏 idle 下几百毫秒一跳。
+        // 游戏 ROM 列表页走专用逻辑（上下选 ROM / 左右音量 / A 启动），
+        // 其它可交互页面走全局导航（LB+RB 回主页 / 上下移选单 / 左右长短按 / A 确认 / B 返回）。
+        const bool pad_ready = pad_state() == PAD_STATE_READY;
+        const int  active_page_now = active_work_page_load();
+        // 设置页、信息页、诊断页、普通工作页都接受手柄全局导航；
+        // 配网门户和低电量模式仍排除（避免误改关键设置）。
+        const bool pad_nav_page =
+            !setup_portal_active_load() && !battery_low_mode_load() &&
+            (settings_page_requested() || info_page_requested() ||
+             network_diag_page_requested() ||
+             is_work_page_enabled(active_page_now));
+        const bool gamepad_needs_poll = pad_ready && (game_idle_page || pad_nav_page);
         if (gamepad_needs_poll) {
-            poll_gamepad_in_game_list(now);
+            if (game_idle_page) {
+                poll_gamepad_in_game_list(now);
+            } else {
+                poll_gamepad_global_nav(now);
+            }
         }
 
         if (boot_pressed) {

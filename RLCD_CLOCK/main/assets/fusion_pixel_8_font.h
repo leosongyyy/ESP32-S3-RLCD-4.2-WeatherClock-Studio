@@ -11,7 +11,9 @@
 typedef struct {
     uint16_t cp;
     uint16_t off;   /* blob 内偏移 */
-    uint8_t  w, h, xoff, yoff, dw, row_bytes;
+    uint8_t  w, h, xoff;
+    int8_t   yoff;   /* BDF 相对基线偏移，可为负 */
+    uint8_t  dw, row_bytes;
 } fusion_pixel_8_glyph_t;
 
 static const uint8_t fusion_pixel_8_bits[] = {

@@ -24,6 +24,7 @@ uint8_t work_page_mask_for_offline_mode(uint8_t page_mask);
 const char *work_page_name(int page);
 int first_enabled_work_page();
 int next_enabled_work_page(int current_page);
+int prev_enabled_work_page(int current_page);
 int first_enabled_work_page_order_index();
 int next_enabled_work_page_order_index(int current_order_index);
 int valid_enabled_work_page_order_index(int current_order_index);

@@ -165,6 +165,11 @@ static uint32_t s_sec_since_ms;
 
 static uint8_t s_buttons[GB_BTN_COUNT];
 
+// 肩键 LB/RB 独立状态，不进 gb_button_t（那 8 个位是 Game Boy 模拟器按键，
+// 加进去会破坏 joypad 位图和 static_assert）。仅用于 UI 层手势，
+// 例如 LB+RB 同时按返回主菜单。L=bit0, R=bit1。
+static uint8_t s_shoulders;
+
 // 描述符路径在这**一包报文**里对哪些 GB 键给出了结论（按下或松开都算）。
 // 绑定表据此让路，见 pad_handle_report() 里绑定覆盖那一段的说明。
 // ⚠ 单位是「每一包」不是「整场连接」：每包进来先清零，由 pad_apply_descriptor()
@@ -366,9 +371,16 @@ int pad_report_mode(void)
     return s_report_mode;
 }
 
+// 肩键状态位：bit0=LB, bit1=RB。给 UI 层做手势用，不参与模拟器按键映射。
+uint8_t pad_shoulders(void)
+{
+    return s_shoulders;
+}
+
 static void pad_clear_buttons(void)
 {
     memset(s_buttons, 0, sizeof(s_buttons));
+    s_shoulders = 0;
 }
 
 // ⚠ 覆盖语义：pressed=false 会**清掉**该位。凡是「多个来源都要往同一个键写」
@@ -639,6 +651,11 @@ static void pad_apply_axes_first(const uint8_t *b, uint16_t len)
     pad_or(GB_BTN_SELECT, (lo & 0x04) != 0);
     pad_or(GB_BTN_START,  (lo & 0x08) != 0);
 
+    // 肩键：实测这台手柄（10 字节轴在前布局）b[5] bit6=LB、bit7=RB，
+    // 抓包确认两键同按时该字节为 0xC0。仅记入独立肩键状态，不进 s_buttons。
+    if (lo & 0x40) s_shoulders |= 0x01;
+    if (lo & 0x80) s_shoulders |= 0x02;
+
     // TODO(mode 3)：b[6]（按键高字节）的位序待实测校正。
     // 常见的候选是 X/Y/L/R（0x01/0x02/0x04/0x08）或 L1/R1/L2/R2，
     // 但也可能整字节是厂商保留位。等 report map 出来按 Usage 顺序补 pad_or()，
@@ -860,6 +877,10 @@ static bool pad_apply_descriptor(const uint8_t *data, uint16_t len)
                 const uint32_t v = hid_extract_bits(body, body_len,
                                                     (uint16_t)off, f->bit_size);
                 const uint16_t btn = (uint16_t)(f->usage_min + k);
+                // 肩键：HID Button page 的 usage 5=L1/LB、6=R1/RB。
+                // 实测手柄两键同按时 b[5]=0xC0，对应这两个 usage。
+                if (btn == 5 && v != 0u) s_shoulders |= 0x01;
+                if (btn == 6 && v != 0u) s_shoulders |= 0x02;
                 // ⚠ 松开也要调用，不能 continue 掉：covered 记的是"有结论"，
                 //   跳过的那些包正是绑定表最容易钻进来的空档（见 pad_desc_mark）。
                 pad_desc_mark(covered, pressed, desc_live,

@@ -245,12 +245,17 @@ def _shapes(el):
     return []
 
 
-def render_svg(path, size, stroke=1.0, threshold=160):
-    """把一个 Lucide SVG 渲染成 size x size 的 1bit PIL 图（0=黑，255=白）。"""
+def render_svg(path, size, stroke=1.0, threshold=160, ss=None, width_px=None):
+    """把一个 Lucide SVG 渲染成 size x size 的 1bit PIL 图（0=黑，255=白）。
+
+    ss=None 用模块默认超采样(SS=4)；ss=1 表示不超采样，直接在目标分辨率画硬边。
+    width_px 给定时线宽直接按目标像素计（超采样时内部乘 ss），便于和电池 1px 硬边对齐。
+    """
     root = ET.parse(str(path)).getroot()
     vb = [float(v) for v in root.get("viewBox", "0 0 24 24").replace(",", " ").split()]
     vx, vy, vw, vh = vb
-    S = size * SS
+    ss = SS if ss is None else ss
+    S = size * ss
     scale = S / max(vw, vh)
     canvas = Image.new("L", (S, S), 255)
     dr = ImageDraw.Draw(canvas)
@@ -277,7 +282,10 @@ def render_svg(path, size, stroke=1.0, threshold=160):
                 dr.polygon(sp, fill=0)
             if a["stroke"] == "none":
                 continue
-            w = max(1, round(a["stroke-width"] * scale * stroke))
+            if width_px is not None:
+                w = max(1, round(width_px * ss))
+            else:
+                w = max(1, round(a["stroke-width"] * scale * stroke))
             line = sp + [sp[0]] if closed else sp
             dr.line(line, fill=0, width=w, joint="curve")
             if not closed:
@@ -285,7 +293,10 @@ def render_svg(path, size, stroke=1.0, threshold=160):
                 for x, y in (sp[0], sp[-1]):
                     dr.ellipse((x - r, y - r, x + r, y + r), fill=0)
 
-    small = canvas.resize((size, size), Image.LANCZOS)
+    if ss == 1:
+        small = canvas
+    else:
+        small = canvas.resize((size, size), Image.LANCZOS)
     return small.point(lambda p: 0 if p < threshold else 255).convert("1")
 
 

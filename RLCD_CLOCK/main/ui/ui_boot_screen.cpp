@@ -9,6 +9,7 @@
 #include "lvgl_bsp.h"
 #include "ui_bitmap.h"
 #include "ui_canvas_primitives.h"
+#include "ui_main_menu.h"
 #include "ui_object_refs.h"
 #include "ui_page_state.h"
 #include "ui_widgets.h"
@@ -202,7 +203,13 @@ bool finish_boot_screen()
     s_boot_anim_canvas = nullptr;
     release_boot_anim_canvas_buffer();
     active_work_page_store(first_enabled_work_page());
-    show_active_work_page();
+    // 主菜单作为开机主页；S3 上电首屏就是它。
+    main_menu_show();
+    if (main_menu_root()) {
+        show_page(main_menu_root());
+    } else {
+        show_active_work_page();
+    }
     lv_refr_now(nullptr);
     Lvgl_unlock();
     return true;

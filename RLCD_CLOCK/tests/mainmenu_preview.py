@@ -69,40 +69,45 @@ def vline(x, y0, y1, c=INK):
 
 
 # ---------- 顶部状态栏 ----------
-# 6 个模块等宽分散（时间/温度/湿度/WiFi/蓝牙/电量），无竖线，仅底部粗横线区隔。
-STATUS_H = 32   # 加高到 32px：第一行时间，第二行年月日，各行都不压横线
-SLOTS = 6
-SW = W // SLOTS          # 每格 66px
-slot_cx = lambda i: i * SW + SW // 2
+# 日期时间同一行（左侧 0..118），其余 5 个图标显式定位：
+# 温度 170 / 湿度 225，WiFi 300 / 蓝牙 322（挨着并贴近电池，电框左边缘 340），电量 365。
+# 图标线条统一 1px，与电池框粗度一致。底部 3px 粗横线区隔。
+STATUS_H = 32
+ICON_CX = [170, 225, 300, 322, 365]   # 温度/湿度/WiFi/蓝牙/电量
+icon_cx = lambda i: ICON_CX[i]
+# 状态栏图标直接用 1 倍分辨率硬边渲染（不超采样），线宽 1px 与电池框一致。
+ICON_KW = dict(ss=1, width_px=1)
 
-# 时间格：上排时间 scale=2（宽 56px，x=6..62，收在第一格内），
-# 下排年月日 scale=1 用负字距收紧，10 字符约 51px，不越格。
-pt(6, 1, "09:41", scale=2)                # 绘制 y=1..18
-pt(6, 21, "2026-11-24", extra=-1)         # 绘制 y=21..29，底部离横线 2px
+# 日期时间同一行：09:41 大字(scale=2, 宽 56px) + 2026-11-24 小字(负字距宽 50px)
+pt(6, 6, "09:41", scale=2)                 # y≈6..24
+pt(68, 10, "2026-11-24", extra=-1)         # y≈10..22
 
-# 温度：18px 图标 + 26°C，整体在 30px 内垂直居中
-cx = slot_cx(1)
-img.paste(lr.icon("thermometer", 18, stroke=1.35), (cx - 20, 7))
-pt(cx + 1, 11, "26°C")
+# 「18px 图标 + 文字」组，按整组墨宽居中到槽中心（与固件 draw_icon_text_group 一致）
+def icon_text_group(icon_name, text, cx):
+    group_w = 18 + 2 + tw(text)
+    sx = cx - group_w // 2
+    img.paste(lr.icon(icon_name, 18, **ICON_KW), (sx, 7))
+    pt(sx + 20, 11, text)
 
-# 湿度
-cx = slot_cx(2)
-img.paste(lr.icon("droplet", 18, stroke=1.35), (cx - 20, 7))
-pt(cx + 1, 11, "45%")
 
-# WiFi + 连接小圆点
-cx = slot_cx(3)
-img.paste(lr.icon("wifi", 18, stroke=1.35), (cx - 12, 7))
-d.ellipse((cx + 8, 6, cx + 14, 12), fill=INK)
+# 温度：thermometer-sun（温度计+太阳辐射线）+ 26°C
+icon_text_group("thermometer-sun", "26°C", icon_cx(0))
 
-# 蓝牙 + 连接小圆点
-cx = slot_cx(4)
-img.paste(lr.icon("bluetooth", 18, stroke=1.35), (cx - 10, 7))
-d.ellipse((cx + 9, 6, cx + 15, 12), fill=INK)
+# 湿度：droplets（一小一大两个水滴）
+icon_text_group("droplets", "45%", icon_cx(1))
 
-# 电池电量：原版格子样式，占第六格
-cx = slot_cx(5)
-bx = cx - 24
+# WiFi：未连接用 wifi-off，连接成功用 wifi
+cx = icon_cx(2)
+img.paste(lr.icon("wifi-off", 18, **ICON_KW), (cx - 9, 7))
+
+# 蓝牙：未连接用 bluetooth-off，连接成功用 bluetooth
+cx = icon_cx(3)
+img.paste(lr.icon("bluetooth-off", 18, **ICON_KW), (cx - 9, 7))
+
+# 电池电量：格子样式，第 5 槽，整组（框28+间隔3+文字）按组宽居中
+cx = icon_cx(4)
+group_w = 28 + 3 + tw("75%")
+bx = cx - group_w // 2
 frame(bx, 10, bx + 24, 22)
 rect(bx + 25, 14, bx + 27, 18)
 for k in range(4):
@@ -119,7 +124,7 @@ TITLE_Y = STATUS_H + 1
 pt(6, TITLE_Y + 5, "MAIN MENU", scale=2)          # 大写高 18，下移避开状态栏粗横线
 # 中文与英文共用 top，保持对齐
 pt(6 + tw("MAIN MENU", 2) + 8, TITLE_Y + 5, "主菜单", scale=2)
-pt(W - 6 - tw("YUAN'S SYS V1.0"), TITLE_Y + 8, "YUAN'S SYS V1.0")
+pt(W - 6 - tw("YUAN'S SYS V1.2"), TITLE_Y + 8, "YUAN'S SYS V1.2")
 # 标题栏下方不加横线，靠留白与卡片区做区隔
 
 # ---------- 卡片网格 ----------
@@ -153,6 +158,7 @@ ICON_NAMES = {
     "ai": "bot", "settings": "settings",
 }
 ICON_SIZE = 34
+MODULE_ICON_KW = dict(ss=1, stroke=1.0)   # 34px 模块图标 1 倍硬边，线宽沿用原 SVG stroke-width
 
 for i, (en, zh, key) in enumerate(cards):
     col, row = i % 4, i // 4
@@ -161,9 +167,11 @@ for i, (en, zh, key) in enumerate(cards):
     # 未选中单线框；选中模块加一圈内框形成双框，与其它模块区分
     frame(x, y, x + CARD_W, y + CARD_H)
     if i == SELECTED:
+        # 内框加粗到 2px（两条相邻线），与固件一致
         frame(x + 3, y + 3, x + CARD_W - 3, y + CARD_H - 3)
+        frame(x + 4, y + 4, x + CARD_W - 4, y + CARD_H - 4)
     cx = x + CARD_W // 2
-    img.paste(lr.icon(ICON_NAMES[key], ICON_SIZE),
+    img.paste(lr.icon(ICON_NAMES[key], ICON_SIZE, **MODULE_ICON_KW),
               (cx - ICON_SIZE // 2, y + 10))
     # 英文副标题用 8px 小字库（比 12px 中文小一圈），长词用负字距收紧；
     # 中文主标题下移，两者之间留出约 4px 行间距
@@ -209,19 +217,18 @@ for i, (en, zh, key) in enumerate(cards):
 # ---------- 底部按键提示栏 ----------
 BAR_Y = 282
 hline(0, W - 1, BAR_Y)
-img.paste(lr.icon("chevron-left", 12), (2, BAR_Y + 3))
-img.paste(lr.icon("chevron-right", 12), (14, BAR_Y + 3))
+img.paste(lr.icon("dpad", 12, ss=1, width_px=1), (8, BAR_Y + 4))
 pt(30, BAR_Y + 6, "MOVE", extra=-1)
 pt(30 + tw("MOVE", extra=-1) + 4, BAR_Y + 6, "移动")
 vline(88, BAR_Y + 3, H - 3)
 
-d.rounded_rectangle((94, BAR_Y + 3, 108, BAR_Y + 14), radius=2, fill=INK)
+d.rounded_rectangle((94, BAR_Y + 4, 108, BAR_Y + 15), radius=2, fill=INK)
 pt(99, BAR_Y + 6, "A", c=PAPER)
 pt(113, BAR_Y + 5, "SELECT")
 pt(113 + tw("SELECT") + 4, BAR_Y + 6, "确认")
 vline(196, BAR_Y + 3, H - 3)
 
-d.rounded_rectangle((202, BAR_Y + 3, 216, BAR_Y + 14), radius=2, fill=INK)
+d.rounded_rectangle((202, BAR_Y + 4, 216, BAR_Y + 15), radius=2, fill=INK)
 pt(207, BAR_Y + 6, "B", c=PAPER)
 pt(221, BAR_Y + 5, "BACK")
 pt(221 + tw("BACK") + 4, BAR_Y + 6, "返回")

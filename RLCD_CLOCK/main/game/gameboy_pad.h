@@ -50,6 +50,10 @@ const char *pad_name(void);
 // 某个 GB 按键当前是否按下。
 bool        pad_button(gb_button_t button);
 
+// 肩键状态位：bit0=LB/L1, bit1=RB/R1。独立于 8 个 GB 按键，
+// 仅供 UI 层手势使用（如 LB+RB 同时按返回主菜单）。
+uint8_t     pad_shoulders(void);
+
 // 收到过多少条 HID 报文，用于判断链路是否真的在工作。
 uint32_t    pad_report_count(void);
 
