@@ -123,15 +123,16 @@ pt(W - 6 - tw("YUAN'S SYS V1.0"), TITLE_Y + 8, "YUAN'S SYS V1.0")
 # 标题栏下方不加横线，靠留白与卡片区做区隔
 
 # ---------- 卡片网格 ----------
-# 4x2 模块在「标题栏 ~ 按键栏」之间上下左右居中、等距分散，
-# 行距 = 列距 = 左右边距 = 上下边距，消除底部空白。
+# 4x2 模块左右居中；垂直方向统一间距：两排间隔 = 第二排到按键栏横线的距离，
+# 第二排贴横线不动，第一排相应下移。
 CARD_W, CARD_H = 90, 104
-GAP_X, GAP_Y = 9, 9
+GAP_X = 9                                          # 列间距
+GAP_V = 5                                          # 行间距 = 第二排到横线距离
+BAR_Y = 282                                        # 按键栏横线
 X0 = (W - (CARD_W * 4 + GAP_X * 3)) // 2          # 左右边距相等
-GRID_TOP_MIN = TITLE_Y + 26                        # 标题栏下方留白
-GRID_BOTTOM_MAX = 282 - 4                          # 按键栏上方留边
-_grid_h = CARD_H * 2 + GAP_Y
-GRID_TOP = GRID_TOP_MIN + (GRID_BOTTOM_MAX - GRID_TOP_MIN - _grid_h) // 2
+ROW1_TOP = BAR_Y - GAP_V - CARD_H                  # 第二排贴横线，留 GAP_V
+ROW0_TOP = ROW1_TOP - GAP_V - CARD_H               # 第一排下移，行间距同为 GAP_V
+ROW_TOPS = (ROW0_TOP, ROW1_TOP)
 B = CARD_H - 100                                   # 下半部分下沉量，填满加高后的卡片
 SELECTED = 0                                       # 当前选中模块索引，双框显示
 
@@ -156,7 +157,7 @@ ICON_SIZE = 34
 for i, (en, zh, key) in enumerate(cards):
     col, row = i % 4, i // 4
     x = X0 + col * (CARD_W + GAP_X)
-    y = GRID_TOP + row * (CARD_H + GAP_Y)
+    y = ROW_TOPS[row]
     # 未选中单线框；选中模块加一圈内框形成双框，与其它模块区分
     frame(x, y, x + CARD_W, y + CARD_H)
     if i == SELECTED:
