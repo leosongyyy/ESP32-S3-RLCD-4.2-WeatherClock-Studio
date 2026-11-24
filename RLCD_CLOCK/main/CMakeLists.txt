@@ -184,6 +184,7 @@ idf_component_register(
         "pomodoro/pomodoro_services.cpp"
         "input/input_tasks.cpp"
         "game/peanut_gb_impl.c"
+        "game/engine_api.cpp"
         "game/game_audio.cpp"
         "game/game_emu.cpp"
         "game/gameboy_fb.cpp"

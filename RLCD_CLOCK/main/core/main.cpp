@@ -7,7 +7,7 @@
 #include "app_metadata.h"
 #include "app_task_readiness.h"
 #include "app_task_startup.h"
-#include "gameboy_rom_store.h"
+#include "engine_api.h"   // 引擎层唯一 API 面（含上层动作回调注册）
 #include "lvgl_bsp.h"
 #include "alarm_services_internal.h"
 #include "battery_runtime_state_internal.h"
@@ -317,6 +317,10 @@ extern "C" void app_main(void)
     if (!init_nvs_storage()) {
         return;
     }
+
+    // 引擎层对 UI 层唯一的需求，在这里注入。早于任何游戏任务/页面创建，
+    // 保证模拟器抢显示所有者时握手计数可用。
+    engine_api_set_display_barrier_cb(ui_display_flush_entry_count);
 
     if (!ota_runtime_state_init()) {
         ESP_LOGE(TAG, MAIN_OTA_RUNTIME_STATE_INIT_FAILED_LOG_FORMAT);

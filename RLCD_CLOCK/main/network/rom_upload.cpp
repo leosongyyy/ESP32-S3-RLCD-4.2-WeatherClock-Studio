@@ -27,8 +27,7 @@
 #include "rom_upload.h"
 
 #include "app_metadata.h"
-#include "game_config.h"
-#include "gameboy_rom_store.h"
+#include "engine_api.h"   // 引擎层唯一 API 面
 
 #include <stdio.h>
 #include <string.h>

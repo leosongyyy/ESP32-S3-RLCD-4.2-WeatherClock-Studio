@@ -5,7 +5,7 @@
 #include "app_display_config.h"
 #include "app_hardware.h"
 #include "app_metadata.h"
-#include "gameboy_runtime.h"
+#include "engine_api.h"   // gameboy_display_owner()，引擎层唯一 API 面
 #include "ota_runtime_state.h"
 #include "runtime_health.h"
 #include "ui_display_diag_policy.h"

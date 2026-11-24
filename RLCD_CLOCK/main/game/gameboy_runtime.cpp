@@ -8,8 +8,10 @@
 #include "gameboy_fb.h"
 #include "gameboy_input.h"
 #include "gameboy_rom_store.h"
-
-#include "ui_display_flush.h"
+// LVGL flush 入口计数由上层注册进来（engine_api.cpp 的回调槽）。
+// 这里绝不 include ui_display_flush.h —— game 层反向 include ui 层会让
+// 两条依赖链成环，之后任何改动都要同时照顾两边。
+#include "engine_api.h"
 
 #include <atomic>
 
@@ -146,12 +148,12 @@ void sleep_until_us(int64_t deadline_us)
 void wait_for_display_handover()
 {
     constexpr int64_t kHandoverTimeoutUs = 100 * 1000;
-    const uint32_t before = ui_display_flush_entry_count();
+    const uint32_t before = engine_api_display_barrier_count();
     gameboy_display_owner_store(true);
 
     const int64_t deadline_us = esp_timer_get_time() + kHandoverTimeoutUs;
     while (esp_timer_get_time() < deadline_us) {
-        if (ui_display_flush_entry_count() != before) {
+        if (engine_api_display_barrier_count() != before) {
             return;
         }
         vTaskDelay(1);

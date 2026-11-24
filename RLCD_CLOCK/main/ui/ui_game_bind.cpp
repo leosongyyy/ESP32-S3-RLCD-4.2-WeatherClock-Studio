@@ -14,8 +14,7 @@
 
 #include "app_display_config.h"
 #include "app_metadata.h"
-#include "gameboy_pad.h"
-#include "gameboy_pad_bind.h"
+#include "engine_api.h"   // 引擎层唯一 API 面
 #include "ui_fonts.h"
 #include "ui_widgets.h"
 

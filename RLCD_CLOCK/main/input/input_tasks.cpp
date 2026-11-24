@@ -6,10 +6,7 @@
 #include "app_metadata.h"
 #include "app_task_readiness.h"
 #include "battery_runtime_state.h"
-#include "gameboy_input.h"
-#include "gameboy_pad.h"
-#include "gameboy_pad_bind.h"
-#include "gameboy_runtime.h"
+#include "engine_api.h"   // 引擎层唯一 API 面
 #include "input_button_config.h"
 #include "input_button_wait_policy.h"
 #include "network_diagnostics_state.h"
