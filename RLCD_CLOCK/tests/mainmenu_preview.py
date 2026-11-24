@@ -67,42 +67,38 @@ def vline(x, y0, y1, c=INK):
     d.line((x, y0, x, y1), fill=c)
 
 
+
 # ---------- 顶部状态栏 ----------
-# 6 个模块等宽分散（时间/温度/湿度/WiFi/蓝牙/电量），竖线分隔。
+# 6 个模块等宽分散（时间/温度/湿度/WiFi/蓝牙/电量），无竖线，仅底部粗横线区隔。
 STATUS_H = 32   # 加高到 32px：第一行时间，第二行年月日，各行都不压横线
 SLOTS = 6
 SW = W // SLOTS          # 每格 66px
 slot_cx = lambda i: i * SW + SW // 2
 
-# 时间格：上排时间 scale=2（宽 56px，x=6..62，收在 x=66 分隔线内），
-# 下排年月日 scale=1 用负字距收紧，10 字符约 51px，同样不压线。
+# 时间格：上排时间 scale=2（宽 56px，x=6..62，收在第一格内），
+# 下排年月日 scale=1 用负字距收紧，10 字符约 51px，不越格。
 pt(6, 1, "09:41", scale=2)                # 绘制 y=1..18
 pt(6, 21, "2026-11-24", extra=-1)         # 绘制 y=21..29，底部离横线 2px
-vline(SW, 3, STATUS_H - 3)
 
 # 温度：18px 图标 + 26°C，整体在 30px 内垂直居中
 cx = slot_cx(1)
 img.paste(lr.icon("thermometer", 18, stroke=1.35), (cx - 20, 7))
 pt(cx + 1, 11, "26°C")
-vline(SW * 2, 3, STATUS_H - 3)
 
 # 湿度
 cx = slot_cx(2)
 img.paste(lr.icon("droplet", 18, stroke=1.35), (cx - 20, 7))
 pt(cx + 1, 11, "45%")
-vline(SW * 3, 3, STATUS_H - 3)
 
 # WiFi + 连接小圆点
 cx = slot_cx(3)
 img.paste(lr.icon("wifi", 18, stroke=1.35), (cx - 12, 7))
 d.ellipse((cx + 8, 6, cx + 14, 12), fill=INK)
-vline(SW * 4, 3, STATUS_H - 3)
 
 # 蓝牙 + 连接小圆点
 cx = slot_cx(4)
 img.paste(lr.icon("bluetooth", 18, stroke=1.35), (cx - 10, 7))
 d.ellipse((cx + 9, 6, cx + 15, 12), fill=INK)
-vline(SW * 5, 3, STATUS_H - 3)
 
 # 电池电量：原版格子样式，占第六格
 cx = slot_cx(5)
@@ -116,23 +112,23 @@ for k in range(4):
     else:
         frame(qx, 12, qx + 3, 20)
 pt(bx + 31, 12, "75%")
-hline(0, W - 1, STATUS_H)
+rect(0, STATUS_H, W - 1, STATUS_H + 2)   # 3px 粗横线，与下方区域区隔
 
 # ---------- 标题栏 ----------
 TITLE_Y = STATUS_H + 1
-pt(6, TITLE_Y + 3, "MAIN MENU", scale=2)          # 大写高 18，baseline=TITLE_Y+21
-# 中文与英文共用 baseline（同样的 top），避免底部被分隔线穿过
-pt(6 + tw("MAIN MENU", 2) + 8, TITLE_Y + 3, "主菜单", scale=2)
-pt(W - 6 - tw("SYS V1.08"), TITLE_Y + 6, "SYS V1.08")
-hline(0, W - 1, TITLE_Y + 25)
+pt(6, TITLE_Y + 5, "MAIN MENU", scale=2)          # 大写高 18，下移避开状态栏粗横线
+# 中文与英文共用 top，保持对齐
+pt(6 + tw("MAIN MENU", 2) + 8, TITLE_Y + 5, "主菜单", scale=2)
+pt(W - 6 - tw("SYS V1.08"), TITLE_Y + 8, "SYS V1.08")
+# 标题栏下方不加横线，靠留白与卡片区做区隔
 
 # ---------- 卡片网格 ----------
-# 4x2 模块在「标题栏分隔线 ~ 按键栏」之间上下左右居中、等距分散，
+# 4x2 模块在「标题栏 ~ 按键栏」之间上下左右居中、等距分散，
 # 行距 = 列距 = 左右边距 = 上下边距，消除底部空白。
 CARD_W, CARD_H = 90, 104
 GAP_X, GAP_Y = 9, 9
 X0 = (W - (CARD_W * 4 + GAP_X * 3)) // 2          # 左右边距相等
-GRID_TOP_MIN = TITLE_Y + 26                        # 标题栏分隔线下方
+GRID_TOP_MIN = TITLE_Y + 26                        # 标题栏下方留白
 GRID_BOTTOM_MAX = 282 - 4                          # 按键栏上方留边
 _grid_h = CARD_H * 2 + GAP_Y
 GRID_TOP = GRID_TOP_MIN + (GRID_BOTTOM_MAX - GRID_TOP_MIN - _grid_h) // 2
