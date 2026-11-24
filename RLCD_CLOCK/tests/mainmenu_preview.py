@@ -119,7 +119,7 @@ TITLE_Y = STATUS_H + 1
 pt(6, TITLE_Y + 5, "MAIN MENU", scale=2)          # 大写高 18，下移避开状态栏粗横线
 # 中文与英文共用 top，保持对齐
 pt(6 + tw("MAIN MENU", 2) + 8, TITLE_Y + 5, "主菜单", scale=2)
-pt(W - 6 - tw("SYS V1.08"), TITLE_Y + 8, "SYS V1.08")
+pt(W - 6 - tw("yuan's sys v1.0"), TITLE_Y + 8, "yuan's sys v1.0")
 # 标题栏下方不加横线，靠留白与卡片区做区隔
 
 # ---------- 卡片网格 ----------
