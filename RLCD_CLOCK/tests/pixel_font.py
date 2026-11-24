@@ -39,7 +39,8 @@ def _draw(img, glyphs, ascent, x, baseline, s, scale, extra, c, fallback_dot):
             cx += 6 * scale + extra
             continue
         w, h, xoff, yoff, dw, row_bytes, rows = g
-        top = baseline - ascent * scale + yoff * scale
+        # BDF yoff 是字形底边相对基线的偏移(向上为正)，顶边 = yoff + h
+        top = baseline - (yoff + h) * scale
         for r, row in enumerate(rows):
             for col in range(w):
                 if row & (1 << (row_bytes * 8 - 1 - col)):
