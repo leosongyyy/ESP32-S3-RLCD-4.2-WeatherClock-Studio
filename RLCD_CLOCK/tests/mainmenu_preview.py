@@ -115,19 +115,27 @@ def vline(x, y0, y1, c=INK):
 # ---------- 顶部状态栏 ----------
 STATUS_H = 22
 text5(6, 6, "09:41", scale=2)
-vline(78, 2, STATUS_H - 2)
-# 温度计 / 水滴 / WiFi / 蓝牙，全部取自 Lucide
-img.paste(lr.icon("thermometer", 15), (90, 3))
-text5(107, 6, "26C", scale=1)
-vline(128, 2, STATUS_H - 2)
-img.paste(lr.icon("droplet", 14), (134, 4))
-text5(150, 6, "45%", scale=1)
-vline(180, 2, STATUS_H - 2)
-img.paste(lr.icon("wifi", 14), (188, 4))
-d.ellipse((210, 1, 216, 7), fill=INK)
-vline(226, 2, STATUS_H - 2)
-img.paste(lr.icon("bluetooth", 15), (233, 3))
-d.ellipse((248, 1, 254, 7), fill=INK)
+vline(72, 2, STATUS_H - 2)
+# 图标放大到 18px 并加粗：15px 在 1bit 电子纸上线条只剩 1px，等于没画
+img.paste(lr.icon("thermometer", 18, stroke=1.35), (78, 2))
+text5(98, 6, "26C", scale=1)
+vline(121, 2, STATUS_H - 2)
+img.paste(lr.icon("droplet", 18, stroke=1.35), (127, 2))
+text5(147, 6, "45%", scale=1)
+vline(170, 2, STATUS_H - 2)
+img.paste(lr.icon("wifi", 18, stroke=1.35), (176, 2))
+img.paste(lr.icon("bluetooth", 18, stroke=1.35), (200, 2))
+# 电池电量用原版格子样式（与底部按键栏同款），放右端
+BX, BY = 344, 5
+frame(BX, BY, BX + 24, BY + 12)
+rect(BX + 25, BY + 4, BX + 27, BY + 8)
+for k in range(4):
+    bx = BX + 2 + k * 5
+    if k < 3:
+        rect(bx, BY + 2, bx + 3, BY + 10)
+    else:
+        frame(bx, BY + 2, bx + 3, BY + 10)
+text5(BX + 32, BY + 3, "75%", scale=1)
 hline(0, W - 1, STATUS_H)
 
 # ---------- 标题栏 ----------
@@ -239,7 +247,7 @@ cn(221 + tw("BACK") + 4, BAR_Y + 5, "返回", size=10)
 
 for k in range(4):
     bx = W - 40 + k * 9
-    if k < 1:
+    if k < 3:
         rect(bx, BAR_Y + 5, bx + 6, BAR_Y + 13)
     else:
         frame(bx, BAR_Y + 5, bx + 6, BAR_Y + 13)
