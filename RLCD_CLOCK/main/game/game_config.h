@@ -57,15 +57,23 @@ inline constexpr uint8_t kWhiteShadeLimit = 2;
 enum DitherMode : uint8_t {
     // 不做灰度：shade < 2 全白、否则全黑。改造前的行为，留作对照/回退。
     kDitherBinary = 0,
-    // 每个 GB 像素用自己 2x2 块的子像素密度表示 4 级明暗。
-    // 单个像素就能独立表达灰度（像素画的保真度最高），默认用它。
+    // 每像素独立 2x2 子像素 + 4 种旋转的抖动图案（旧默认）。
+    // 相位按 (line+column)&3 轮换，阈值周期只有 2 个物理像素，
+    // 中间灰会铺成较明显的斜向网格。保留作对照/回退。
     kDitherSpatial2x2 = 1,
     // 在 160x144 原生分辨率上做 4x4 Bayer 有序抖动，再最近邻放大 2x。
     // 单个像素非黑即白，靠 4x4 邻域内的疏密表达明暗（纹理更细，但孤立像素
     // 的灰度会丢失）。参考 gambatte-k2（Kindle 电子纸上的 GB 模拟器）的做法。
     kDitherBayer4x4 = 2,
+    // 【当前默认】每个像素仍用自己 2x2 块的子像素表达灰度（保住孤立像素
+    // 的层次），但块的图案取自标准 4x4 Bayer 的对应相位：相位由源像素坐标
+    // (line&1, column&1) 决定，相邻 2x2 个 GB 像素的块正好拼成一张完整的
+    // 16 阈值 Bayer 矩阵。相比模式 1，阈值位置从 4 个增到 16 个，黑点分布
+    // 更均匀、网格纹理更细，同时密度曲线与 DMG 调色板严格一致。
+    // 参考 LinTOS gray_quant.c 的 GRAY_ALG_BAYER_4X4 实现。
+    kDitherSpatialBayer4x4 = 3,
 };
-inline constexpr DitherMode kDitherMode = kDitherSpatial2x2;
+inline constexpr DitherMode kDitherMode = kDitherSpatialBayer4x4;
 
 // 4 级灰度分别点亮 2x2 块里的几个子像素（0..4），下标 = shade。
 //

@@ -106,6 +106,67 @@ constexpr uint8_t kBayer4x4[4][4] = {
     {15,  7, 13,  5},
 };
 
+// ---- 模式 3（kDitherSpatialBayer4x4）的相位图案表 ----
+//
+// 做法：把一张 4x4 阈值矩阵按 2x2 切成 4 个象限，由 (line&1, column&1)
+// 选象限，于是相邻 2x2 个 GB 像素（4 个块）各取一个象限，合起来铺满整张
+// 16 阈值矩阵 —— 抖动周期从 2 物理像素扩到 4 物理像素。
+//
+// ⚠ 不能直接用上面那张标准 Bayer kBayer4x4 来切象限。标准 Bayer 是递归
+//   构造的（M(2n) = 4*M(n) + pattern），每个 2x2 象限里最小阈值恒在左上角、
+//   最大恒在右下角，4 个象限的 2x2 图案**完全相同**，切了等于没切。
+//   实测标准矩阵下 shade1 的 4 相位全是 0x0D —— 只是把旧模式的旋转退化成
+//   固定图案。所以这里用一张专门为分相位设计的矩阵：
+//     · 0..15 各出现一次（保持 16 阈值的均匀密度）
+//     · 每个 2x2 象限恰好 1 个 <4、2 个 4..11、1 个 >=12（密度曲线不变）
+//     · 4 个象限的 <4 那格分别落在左上/右上/左下/右下（图案才真不同）
+constexpr uint8_t kPhaseBayer[4][4] = {
+    { 0,  6,  4,  1},
+    {10, 15, 14,  9},
+    { 5, 13, 12,  7},
+    { 2, 11,  8,  3},
+};
+
+// 黑点判定用 16 制密度 d = 16 - kShadeLevel[shade]（0=最白 16=最黑）：
+//   子像素黑 ⟺ d > 该物理位置的阈值（d 个最小阈值处落黑点）
+// 与 LinTOS gray_quant.c 的 (d > th) ? 黑 : 白 同构。
+// ⚠ kShadeLevel 是**亮度**刻度（16 最亮），必须先反相成黑度再比，直接拿它
+//   当 d 会让黑白完全颠倒 —— 下面的纯白/纯黑编译期断言就是钉这条的。
+constexpr uint8_t bay4_phase_nibble(int line_phase, int col_phase, int shade)
+{
+    const uint8_t d = (uint8_t)(16 - game_config::kShadeLevel[shade]);  // 黑度 0..16
+    uint8_t p = 0;
+    for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+            const int by = (line_phase * 2 + i) & 3;
+            const int bx = (col_phase * 2 + j) & 3;
+            if (!(d > kPhaseBayer[by][bx])) {   // 非黑即亮
+                p = (uint8_t)(p | (uint8_t)(1U << kSubBit[i][j]));
+            }
+        }
+    }
+    return p;
+}
+
+struct PhaseLut {
+    uint8_t v[2][2][4];   // [line&1][column&1][shade] -> 4 位子像素图案
+};
+
+constexpr PhaseLut make_phase_lut(void)
+{
+    PhaseLut t{};
+    for (int lp = 0; lp < 2; ++lp) {
+        for (int cp = 0; cp < 2; ++cp) {
+            for (int s = 0; s < 4; ++s) {
+                t.v[lp][cp][s] = bay4_phase_nibble(lp, cp, s);
+            }
+        }
+    }
+    return t;
+}
+
+constexpr PhaseLut kPhaseLut = make_phase_lut();
+
 // GB 的 2bit shade（0=最白、3=最黑）→ 该像素在面板上的 2x2 子像素图案。
 //
 // 三种模式都收敛到同一个"4 位图案"表示，写盘通路因此只有一份。
@@ -121,6 +182,8 @@ inline uint8_t shade_to_nibble(uint8_t shade, int line, int column)
         const bool white = level > kBayer4x4[line & 3][column & 3];
         return white ? 0x0FU : 0x00U;
     }
+    case game_config::kDitherSpatialBayer4x4:
+        return kPhaseLut.v[line & 1][column & 1][shade];
     case game_config::kDitherSpatial2x2:
     default:
         return kDensityLut.v[(line + column) & 3][shade];
@@ -159,6 +222,72 @@ static_assert(kDensityLut.v[0][1] != kDensityLut.v[1][1] &&
                   kDensityLut.v[0][1] != kDensityLut.v[2][1] &&
                   kDensityLut.v[0][1] != kDensityLut.v[3][1],
               "bayer rotations must yield distinct shade-1 patterns");
+
+// ---- 模式 3 的编译期不变量 ----
+// kPhaseBayer 必须是 0..15 的一个排列，否则 16 阈值就不均匀。
+constexpr bool phase_bayer_is_permutation(void)
+{
+    bool seen[16] = {};
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            const int v = kPhaseBayer[y][x];
+            if (v < 0 || v > 15 || seen[v]) {
+                return false;
+            }
+            seen[v] = true;
+        }
+    }
+    return true;
+}
+static_assert(phase_bayer_is_permutation(),
+              "phase Bayer must be a permutation of 0..15");
+// 每个 2x2 象限必须恰有 1 个 <4 和 1 个 >=12，否则 shade1/2 的密度会偏。
+constexpr int quadrant_low_count(int lp, int cp, int lo, int hi)
+{
+    int n = 0;
+    for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+            const int v = kPhaseBayer[(lp * 2 + i) & 3][(cp * 2 + j) & 3];
+            n += (v >= lo && v < hi) ? 1 : 0;
+        }
+    }
+    return n;
+}
+static_assert(quadrant_low_count(0, 0, 0, 4) == 1 &&
+                  quadrant_low_count(0, 1, 0, 4) == 1 &&
+                  quadrant_low_count(1, 0, 0, 4) == 1 &&
+                  quadrant_low_count(1, 1, 0, 4) == 1 &&
+                  quadrant_low_count(0, 0, 12, 16) == 1 &&
+                  quadrant_low_count(0, 1, 12, 16) == 1 &&
+                  quadrant_low_count(1, 0, 12, 16) == 1 &&
+                  quadrant_low_count(1, 1, 12, 16) == 1,
+              "each phase Bayer quadrant must hold exactly one low and one high threshold");
+// 纯白必须 4 个子像素全亮、纯黑全灭，4 个相位一个都不能例外。
+static_assert(kPhaseLut.v[0][0][0] == 0x0F && kPhaseLut.v[0][1][0] == 0x0F &&
+                  kPhaseLut.v[1][0][0] == 0x0F && kPhaseLut.v[1][1][0] == 0x0F &&
+                  kPhaseLut.v[0][0][3] == 0x00 && kPhaseLut.v[0][1][3] == 0x00 &&
+                  kPhaseLut.v[1][0][3] == 0x00 && kPhaseLut.v[1][1][3] == 0x00,
+              "phase LUT must keep pure white / pure black exact");
+// 关键：Bayer 4x4 的 2x2 象限里恰有一个阈值 < 4、三个 >= 12，
+// 所以 d=4(shade1) 每块亮 3 个、d=12(shade2) 每块亮 1 个 —— 与 4 制模式
+// 的密度曲线严格相同。任一相位写错密度会在这里直接编译失败。
+static_assert(popcount4(kPhaseLut.v[0][0][1]) == game_config::kShadeDensity[1] &&
+                  popcount4(kPhaseLut.v[0][1][1]) == game_config::kShadeDensity[1] &&
+                  popcount4(kPhaseLut.v[1][0][1]) == game_config::kShadeDensity[1] &&
+                  popcount4(kPhaseLut.v[1][1][1]) == game_config::kShadeDensity[1] &&
+                  popcount4(kPhaseLut.v[0][0][2]) == game_config::kShadeDensity[2] &&
+                  popcount4(kPhaseLut.v[0][1][2]) == game_config::kShadeDensity[2] &&
+                  popcount4(kPhaseLut.v[1][0][2]) == game_config::kShadeDensity[2] &&
+                  popcount4(kPhaseLut.v[1][1][2]) == game_config::kShadeDensity[2],
+              "phase LUT density must match the DMG curve in every quadrant");
+// 4 个象限的 shade1 图案必须互不相同，否则"扩周期打散网格"就没落地。
+static_assert(kPhaseLut.v[0][0][1] != kPhaseLut.v[0][1][1] &&
+                  kPhaseLut.v[0][0][1] != kPhaseLut.v[1][0][1] &&
+                  kPhaseLut.v[0][0][1] != kPhaseLut.v[1][1][1] &&
+                  kPhaseLut.v[0][1][1] != kPhaseLut.v[1][0][1] &&
+                  kPhaseLut.v[0][1][1] != kPhaseLut.v[1][1][1] &&
+                  kPhaseLut.v[1][0][1] != kPhaseLut.v[1][1][1],
+              "four Bayer quadrants must yield four distinct shade-1 patterns");
 static_assert(game_config::kPanelBytesPerColumn == 75,
               "panel byte column height must stay 75");
 static_assert(block_row_for_even_line(0) == 74,
