@@ -59,51 +59,53 @@ def vline(x, y0, y1, c=INK):
 
 # ---------- 顶部状态栏 ----------
 # 6 个模块等宽分散（时间/温度/湿度/WiFi/蓝牙/电量），竖线分隔。
-STATUS_H = 22
+STATUS_H = 32   # 加高到 32px：第一行时间，第二行年月日，各行都不压横线
 SLOTS = 6
 SW = W // SLOTS          # 每格 66px
 slot_cx = lambda i: i * SW + SW // 2
 
-# 时间：取模 scale=2，宽 56px，从 x=6 到 x=62，收在 x=66 分隔线内
-pt(6, 5, "09:41", scale=2)
-vline(SW, 2, STATUS_H - 2)
+# 时间格：上排时间 scale=2（宽 56px，x=6..62，收在 x=66 分隔线内），
+# 下排年月日 scale=1 用负字距收紧，10 字符约 51px，同样不压线。
+pt(6, 1, "09:41", scale=2)                # 绘制 y=1..18
+pt(6, 21, "2026-11-24", extra=-1)         # 绘制 y=21..29，底部离横线 2px
+vline(SW, 3, STATUS_H - 3)
 
-# 温度：18px 图标 + 26°C
+# 温度：18px 图标 + 26°C，整体在 30px 内垂直居中
 cx = slot_cx(1)
-img.paste(lr.icon("thermometer", 18, stroke=1.35), (cx - 20, 2))
-pt(cx + 1, 5, "26°C")
-vline(SW * 2, 2, STATUS_H - 2)
+img.paste(lr.icon("thermometer", 18, stroke=1.35), (cx - 20, 7))
+pt(cx + 1, 11, "26°C")
+vline(SW * 2, 3, STATUS_H - 3)
 
 # 湿度
 cx = slot_cx(2)
-img.paste(lr.icon("droplet", 18, stroke=1.35), (cx - 20, 2))
-pt(cx + 1, 5, "45%")
-vline(SW * 3, 2, STATUS_H - 2)
+img.paste(lr.icon("droplet", 18, stroke=1.35), (cx - 20, 7))
+pt(cx + 1, 11, "45%")
+vline(SW * 3, 3, STATUS_H - 3)
 
 # WiFi + 连接小圆点
 cx = slot_cx(3)
-img.paste(lr.icon("wifi", 18, stroke=1.35), (cx - 12, 2))
-d.ellipse((cx + 8, 1, cx + 14, 7), fill=INK)
-vline(SW * 4, 2, STATUS_H - 2)
+img.paste(lr.icon("wifi", 18, stroke=1.35), (cx - 12, 7))
+d.ellipse((cx + 8, 6, cx + 14, 12), fill=INK)
+vline(SW * 4, 3, STATUS_H - 3)
 
 # 蓝牙 + 连接小圆点
 cx = slot_cx(4)
-img.paste(lr.icon("bluetooth", 18, stroke=1.35), (cx - 10, 2))
-d.ellipse((cx + 9, 1, cx + 15, 7), fill=INK)
-vline(SW * 5, 2, STATUS_H - 2)
+img.paste(lr.icon("bluetooth", 18, stroke=1.35), (cx - 10, 7))
+d.ellipse((cx + 9, 6, cx + 15, 12), fill=INK)
+vline(SW * 5, 3, STATUS_H - 3)
 
 # 电池电量：原版格子样式，占第六格
 cx = slot_cx(5)
 bx = cx - 24
-frame(bx, 5, bx + 24, 17)
-rect(bx + 25, 9, bx + 27, 13)
+frame(bx, 10, bx + 24, 22)
+rect(bx + 25, 14, bx + 27, 18)
 for k in range(4):
     qx = bx + 2 + k * 5
     if k < 3:
-        rect(qx, 7, qx + 3, 15)
+        rect(qx, 12, qx + 3, 20)
     else:
-        frame(qx, 7, qx + 3, 15)
-pt(bx + 31, 7, "75%")
+        frame(qx, 12, qx + 3, 20)
+pt(bx + 31, 12, "75%")
 hline(0, W - 1, STATUS_H)
 
 # ---------- 标题栏 ----------
