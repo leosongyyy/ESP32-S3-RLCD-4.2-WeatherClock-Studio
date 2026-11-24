@@ -149,7 +149,7 @@ cards = [
 
 ICON_NAMES = {
     "weather": "cloud-sun", "pomodoro": "timer", "games": "gamepad-2",
-    "reading": "book-open", "music": "music-2", "news": "newspaper",
+    "reading": "book-open", "music": "music", "news": "newspaper",
     "ai": "bot", "settings": "settings",
 }
 ICON_SIZE = 34
