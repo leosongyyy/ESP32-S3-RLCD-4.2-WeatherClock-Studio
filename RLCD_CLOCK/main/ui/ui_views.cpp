@@ -34,6 +34,8 @@
 #include "ui_info_page_state_internal.h"
 #include "ui_loop_schedule.h"
 #include "ui_main_menu.h"
+#include "ui_pomodoro.h"
+#include "pomodoro/pomodoro_classic.h"
 #include "ui_runtime_schedule.h"
 #include "ui_setup_status.h"
 #include "ui_status_refresh_policy.h"
@@ -47,6 +49,7 @@
 #include "wifi_radio_state.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <stdint.h>
 
 namespace {
@@ -67,6 +70,7 @@ enum class VisibleAuxiliaryPage {
     kNetworkDiagnostics,
     kSettings,
     kMainMenu,
+    kPomodoro,
 };
 
 static_assert(kUiInfoPageOtaFallbackPollMs > 0,
@@ -139,10 +143,20 @@ void ui_task(void *)
     int low_battery_resume_page = kWorkPageWeatherClock;
     bool low_battery_resume_pending = false;
     uint8_t lvgl_lock_failures = 0;
+    // 番茄钟页：局部快照 + 上一秒时间戳，用于每秒推进计时并局刷。
+    ClassicSnapshot pomodoro_snap = {};
+    int64_t pomodoro_last_tick_us = 0;
+    int pomodoro_last_min = -1;
+    int pomodoro_last_batt = -999;
+    bool pomodoro_snap_valid = false;
     regular_app_task_mark_ready(RegularAppTaskId::kUi);
 
     for (;;) {
         runtime_health_record_current_task_stack(RegularAppTaskId::kUi);
+        // 全页面保活：每帧确保 BLE 手柄服务任务在跑（懒创建，已存在则立即返回）。
+        // 放在这里而非各页面分支，保证天气钟/设置/番茄钟等所有页面都能维持
+        // 手柄连接。真正的开关由服务任务内部按"离线 5 分钟"策略决定。
+        pad_service_ensure();
         // 逃生守卫：低电量 / OTA / 配网页 / 等待重启时停掉模拟器。
         // 必须在这里（拿 LVGL 锁之前、所有 continue 之前）无条件跑一次：
         // 低电量与配网页激活会把工作页强切到天气钟并让 state.game=false，
@@ -264,6 +278,93 @@ void ui_task(void *)
                 (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
                 continue;
             }
+
+            // 番茄钟页：与主菜单一样独占这一帧。每秒推进计时并按事件局刷，
+            // 手柄 A/上下键通过 notify_ui_task() 立即唤醒，B/LB+RB 由输入任务
+            // 调 pomodoro_hide() 退出。计时基准是单调时钟，B 返回后数据继续走。
+            if (pomodoro_shown() && !battery.low_battery_mode &&
+                !runtime_surfaces.setup_portal_active) {
+                // 番茄钟也需要手柄操作（A/上下/返回），必须像主菜单一样
+                // 每帧拉起并保持 BLE 手柄服务可见，否则宽限期后 pad_stop()
+                // 断连，手柄按键全部失效。
+                pad_service_ensure();
+                pad_service_notify_visible();
+                build_pomodoro_ui();
+                if (pomodoro_root() &&
+                    visible_auxiliary_page != VisibleAuxiliaryPage::kPomodoro) {
+                    show_page(pomodoro_root());
+                    visible_auxiliary_page = VisibleAuxiliaryPage::kPomodoro;
+                    pomodoro_snap_valid = false;   // 强制首帧全刷
+                    pomodoro_last_tick_us = 0;
+                    pomodoro_last_min = -1;
+                    pomodoro_last_batt = -999;
+                }
+                int64_t now_us = esp_timer_get_time();
+                // 900ms 阈值区分「每秒定时唤醒」与「手柄 notify 提前唤醒」，
+                // 避免超时抖动（~999ms）被误判成手柄操作导致每秒全刷闪烁。
+                bool second_due = pomodoro_last_tick_us == 0 ||
+                    (now_us - pomodoro_last_tick_us) >= 900000;
+                uint32_t events = 0;
+                bool first_frame = !pomodoro_snap_valid;
+                if (second_due) {
+                    events = classic_tick(now_us, now);
+                    pomodoro_last_tick_us = now_us;
+                }
+                // 每次都取快照：手柄 A/上下键可能刚改了 MODE/运行状态。
+                classic_get_snapshot(&pomodoro_snap);
+                pomodoro_snap_valid = true;
+
+                int pomodoro_battery = battery_snapshot_valid ? battery.percent : -1;
+                PomodoroView view = {};
+                pomodoro_view_from_snapshot(&view, &pomodoro_snap);
+                if (!second_due || first_frame) {
+                    // 首帧或手柄操作唤醒：全刷，保证 MODE 选中/倒计时立即生效。
+                    pomodoro_redraw_all(&view,
+                                        cached_local_valid ? &local : nullptr,
+                                        pomodoro_battery);
+                    if (cached_local_valid) pomodoro_last_min = local.tm_min;
+                    pomodoro_last_batt = pomodoro_battery;
+                    refresh_now = true;
+                } else {
+                    // 整秒：按事件精细局刷，状态栏按分钟/电量变化刷。
+                    if (cached_local_valid && local.tm_min != pomodoro_last_min) {
+                        pomodoro_refresh_status_bar(&local, pomodoro_battery);
+                        pomodoro_last_min = local.tm_min;
+                        refresh_now = true;
+                    } else if (pomodoro_battery >= 0 &&
+                               pomodoro_battery != pomodoro_last_batt) {
+                        pomodoro_refresh_status_bar(&local, pomodoro_battery);
+                        pomodoro_last_batt = pomodoro_battery;
+                        refresh_now = true;
+                    }
+                    if (events & kClassicEvProgress) {
+                        pomodoro_refresh_countdown(&view, pomodoro_battery);
+                        refresh_now = true;
+                    }
+                    if (events & kClassicEvToday) {
+                        pomodoro_refresh_today(&view);
+                        refresh_now = true;
+                    }
+                    if (events & kClassicEvMode) {
+                        pomodoro_refresh_mode(&view);
+                        // 阶段切换时节数 +1，标题 SESSION 第 N 节跟着更新。
+                        pomodoro_refresh_title(&view);
+                        refresh_now = true;
+                    }
+                    if (events & kClassicEvStats) {
+                        pomodoro_refresh_stats(&view);
+                        refresh_now = true;
+                    }
+                    if (events & kClassicEvNext) {
+                        pomodoro_refresh_next(&view);
+                        refresh_now = true;
+                    }
+                }
+                if (refresh_now) lv_refr_now(nullptr);
+                Lvgl_unlock();
+                (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+                continue;
+            }
             bool info_requested = runtime_surfaces.info_requested;
             InfoPageStateSnapshot info_state = {};
             OtaRuntimeTimingSnapshot info_ota = {};
@@ -306,6 +407,12 @@ void ui_task(void *)
             };
             // 从主页进入工作页后，需要主动显示目标工作页。
             if (visible_auxiliary_page == VisibleAuxiliaryPage::kMainMenu) {
+                visible_auxiliary_page = VisibleAuxiliaryPage::kNone;
+                restore_active_work_page_after_aux(false);
+            }
+            // 从番茄钟退出后恢复工作页（计时数据由 classic 核心后台继续维护）。
+            if (visible_auxiliary_page == VisibleAuxiliaryPage::kPomodoro &&
+                !pomodoro_shown()) {
                 visible_auxiliary_page = VisibleAuxiliaryPage::kNone;
                 restore_active_work_page_after_aux(false);
             }

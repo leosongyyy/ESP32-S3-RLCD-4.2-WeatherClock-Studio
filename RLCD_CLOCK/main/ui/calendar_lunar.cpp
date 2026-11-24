@@ -326,6 +326,11 @@ static const char *solar_term(int year, int month, int day)
     return nullptr;
 }
 
+const char *calendar_solar_term_text(int year, int month, int day)
+{
+    return solar_term(year, month, day);
+}
+
 const char *calendar_lunar_day_text(const CalendarDayInfo &info)
 {
     return info.lunar_day >= 1 && info.lunar_day <= 30

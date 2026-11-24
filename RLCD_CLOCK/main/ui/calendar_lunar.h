@@ -22,3 +22,7 @@ const char *calendar_lunar_day_text(const CalendarDayInfo &info);
 const char *calendar_lunar_month_text(const CalendarDayInfo &info);
 int calendar_days_in_month(int year, int month);
 int calendar_first_weekday(int year, int month);
+
+// 当天若为二十四节气返回节气名（如「立冬」），否则返回 nullptr。
+// 只判节气，不含农历/公历节日，供主菜单天气卡片状态行使用。
+const char *calendar_solar_term_text(int year, int month, int day);

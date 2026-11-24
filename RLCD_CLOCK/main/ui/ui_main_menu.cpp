@@ -13,6 +13,8 @@
 #include "assets/fusion_pixel_12_font.h"
 #include "assets/fusion_pixel_8_font.h"
 #include "assets/menu_icons.h"
+#include "calendar_lunar.h"      // 当天节气，天气卡片状态行
+#include "pomodoro/pomodoro_classic.h"
 
 #include <esp_log.h>
 
@@ -277,7 +279,7 @@ struct Card {
 
 constexpr Card kCards[8] = {
     {"WEATHER",      "天气时钟", "cloud_sun_34",  MainMenuAction::kWeatherClock},
-    {"POMODORO",     "番茄钟",   "timer_34",      MainMenuAction::kNone},
+    {"POMODORO",     "番茄钟",   "timer_34",      MainMenuAction::kPomodoro},
     {"GAMES",        "游戏",     "gamepad_2_34",  MainMenuAction::kGameBoy},
     {"READING",      "阅读",     "book_open_34",  MainMenuAction::kNone},
     {"MUSIC",        "音乐",     "music_34",      MainMenuAction::kNone},
@@ -394,7 +396,7 @@ void draw_title_bar()
     text12(6, TITLE_Y + 5, "MAIN MENU", 2);
     int x = 6 + text_width12("MAIN MENU", 2) + 8;
     text12(x, TITLE_Y + 5, "主菜单", 2);
-    const char *ver = "YUAN'S SYS V1.2";
+    const char *ver = "YUAN'S SYS V1.3";
     text12(W - 6 - text_width12(ver), TITLE_Y + 8, ver);
 }
 
@@ -421,13 +423,38 @@ void draw_card(int i, const struct tm *local, bool selected)
     hline(x + 6, x + CARD_W - 6, y + 78);
 
     // 状态行（沿用预览的静态占位数据）
-    if (i == 0) {  // weather
-        text12_center(cx, y + 83, "26/09:41");
+    if (i == 0) {  // weather：当天星期几，逢节气追加「 节气」
+        static constexpr const char *kWeekdays[7] = {
+            "周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+        int wday = local ? local->tm_wday : 3;
+        if (wday < 0 || wday > 6) wday = 3;
+        char status[24];
+        const char *term = nullptr;
+        if (local) {
+            int year = local->tm_year + 1900;
+            int mon = local->tm_mon + 1;
+            term = calendar_solar_term_text(year, mon, local->tm_mday);
+        }
+        if (term && term[0]) {
+            snprintf(status, sizeof(status), "%s %s", kWeekdays[wday], term);
+        } else {
+            snprintf(status, sizeof(status), "%s", kWeekdays[wday]);
+        }
+        text12_center(cx, y + 83, status);
     } else if (i == 1) {  // pomodoro
-        text12(x + 10, y + 83, "25:00");
+        // 模式时长（25:00 专注 / 05:00 短休 / 15:00 长休）与今日完成数
+        // 都取自经典番茄核心，和番茄钟页保持同步。
+        ClassicSnapshot snap = {};
+        classic_get_snapshot(&snap);
+        char mode_time[12];
+        int mm = static_cast<int>(snap.phase_duration_sec / 60);
+        int ss = static_cast<int>(snap.phase_duration_sec % 60);
+        snprintf(mode_time, sizeof(mode_time), "%02d:%02d", mm, ss);
+        text12(x + 10, y + 83, mode_time);
+        int done = snap.today_count > 4 ? 4 : snap.today_count;
         for (int k = 0; k < 4; ++k) {
             int bx = x + 48 + k * 9;
-            if (k < 3) fill_rect(bx, y + 84, bx + 6, y + 90);
+            if (k < done) fill_rect(bx, y + 84, bx + 6, y + 90);
             else rect_frame(bx, y + 84, bx + 6, y + 90);
         }
     } else if (i == 2) {  // games
@@ -536,6 +563,10 @@ void redraw(const struct tm *local, int battery_percent)
 void build_main_menu_ui()
 {
     if (s_root) return;
+    // 主菜单要显示今日番茄数，这里首次构建时确保经典核心已加载 NVS。
+    // classic_init 幂等，进入番茄钟页再调也不会重复初始化。
+    // 此时 NVS 与时区已在 app_main 就绪，可安全做跨天清零与统计读取。
+    classic_init();
     s_root = create_page_root();
     if (!s_root) {
         ESP_LOGW(TAG, "create page root failed");
@@ -636,6 +667,8 @@ bool update_main_menu(const struct tm *local, int battery_percent)
     static int last_pct = -999;
     static int last_bt = -1;
     static int last_wifi = -1;
+    static int last_pomo_key = -1;
+    static int last_date_key = -1;
 
     char time_key[64];
     snprintf(time_key, sizeof(time_key), "%04d%02d%02d%02d%02d",
@@ -660,8 +693,21 @@ bool update_main_menu(const struct tm *local, int battery_percent)
     const int wifi_on = wifi_connected() ? 1 : 0;
     const bool wifi_changed = wifi_on != last_wifi;
 
+    // 番茄钟卡片：模式时长或今日完成数变化时局刷该卡（单卡 90px，局刷不闪）。
+    ClassicSnapshot snap = {};
+    classic_get_snapshot(&snap);
+    const int done = snap.today_count > 4 ? 4 : snap.today_count;
+    const int pomo_key = static_cast<int>(snap.phase) * 100 + done;
+    const bool pomo_changed = pomo_key != last_pomo_key;
+
+    // 天气卡片状态行（星期几 / 节气）按天变化，跨天重画卡片 0。
+    const int date_key = local ? (local->tm_year * 10000 +
+                                  (local->tm_mon + 1) * 100 + local->tm_mday)
+                               : 0;
+    const bool date_changed = date_key != last_date_key;
+
     if (!time_changed && !pct_changed && !env_changed && !bt_changed &&
-        !wifi_changed) return false;
+        !wifi_changed && !pomo_changed && !date_changed) return false;
 
     if (time_changed) {
         std::strncpy(last_time, time_key, sizeof(last_time) - 1);
@@ -692,6 +738,14 @@ bool update_main_menu(const struct tm *local, int battery_percent)
         fill_rect(BATT_X1, BATT_Y0, BATT_X2, BATT_Y1, false);
         draw_battery(battery_percent);
         invalidate_rect(BATT_X1, BATT_Y0, BATT_X2, BATT_Y1);
+    }
+    if (pomo_changed) {
+        last_pomo_key = pomo_key;
+        redraw_card(1, s_selection == 1);
+    }
+    if (date_changed) {
+        last_date_key = date_key;
+        redraw_card(0, s_selection == 0);
     }
     return true;
 }

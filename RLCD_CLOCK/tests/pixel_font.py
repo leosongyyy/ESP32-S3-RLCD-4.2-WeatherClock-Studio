@@ -68,6 +68,64 @@ def draw_center(img, cx, baseline, s, scale=1, extra=0, c=INK):
     draw(img, cx - text_w(s, scale, extra) // 2, baseline, s, scale, extra, c)
 
 
+# 粗体绘制（参考图是 12px 粗像素体，笔画 2px、字腔小）。
+# 把每个置位像素向右/向下各扩 1 个目标像素；thick 固定 1px，
+# 因此 scale=1 时笔画 2px，scale=4 的大字笔画 5px，与参考图一致。
+def _draw_bold(img, glyphs, ascent, x, baseline, s, scale, extra, c,
+               thick=1, thick_y=None):
+    px = img.load()
+    W, H = img.size
+    cx = x
+    ty = thick if thick_y is None else thick_y
+    for ch in s:
+        g = glyphs.get(ord(ch))
+        if g is None:
+            if ch.strip():
+                for yy in range(ascent * scale + ty):
+                    for xx in range(5 * scale + thick):
+                        if xx < thick or yy < ty or \
+                           xx >= 5 * scale or yy >= ascent * scale:
+                            X, Y = cx + xx, baseline - ascent * scale + yy
+                            if 0 <= X < W and 0 <= Y < H:
+                                px[X, Y] = c
+            cx += 6 * scale + extra
+            continue
+        w, h, xoff, yoff, dw, row_bytes, rows = g
+        top = baseline - (yoff + h) * scale
+        for r, row in enumerate(rows):
+            for col in range(w):
+                if row & (1 << (row_bytes * 8 - 1 - col)):
+                    X0 = cx + (xoff + col) * scale
+                    Y0 = top + r * scale
+                    for sy in range(scale + ty):
+                        for sx in range(scale + thick):
+                            X, Y = X0 + sx, Y0 + sy
+                            if 0 <= X < W and 0 <= Y < H:
+                                px[X, Y] = c
+        cx += dw * scale + extra
+    return cx
+
+
+def bold_text_w(s, scale=1, extra=0):
+    """粗体字宽，末尾 1px 膨胀不计入，避免字距被撑开。"""
+    return _text_w(main.GLYPHS, s, scale, extra)
+
+
+def bold_draw(img, x, baseline, s, scale=1, extra=0, c=INK):
+    return _draw_bold(img, main.GLYPHS, main.FONT_ASCENT, x, baseline,
+                      s, scale, extra, c)
+
+
+def bold_draw_center(img, cx, baseline, s, scale=1, extra=0, c=INK):
+    bold_draw(img, cx - bold_text_w(s, scale, extra) // 2, baseline,
+              s, scale, extra, c)
+
+
+def small_bold_draw(img, x, baseline, s, scale=1, extra=0, c=INK):
+    return _draw_bold(img, small.GLYPHS, small.FONT_ASCENT, x, baseline,
+                      s, scale, extra, c)
+
+
 # 小字库（8px，仅 ASCII），用于卡片英文副标题
 def small_text_w(s, scale=1, extra=0):
     return _text_w(small.GLYPHS, s, scale, extra)

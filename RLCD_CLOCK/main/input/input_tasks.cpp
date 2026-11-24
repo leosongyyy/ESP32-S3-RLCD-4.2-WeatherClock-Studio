@@ -13,12 +13,14 @@
 #include "network_sync_requests.h"
 #include "ota_services.h"
 #include "pomodoro_services.h"
+#include "pomodoro/pomodoro_classic.h"
 #include "runtime_health.h"
 #include "task_notification_target.h"
 #include "ui_game.h"
 #include "ui_game_bind.h"
 #include "ui_info_page_state.h"
 #include "ui_main_menu.h"
+#include "ui_pomodoro.h"
 #include "ui_settings_activity_state.h"
 #include "ui_settings_feedback.h"
 #include "ui_settings_navigation.h"
@@ -112,6 +114,9 @@ void handle_settings_key_long_or_busy();
 // 当前工作页保持不变，主页只是覆盖在它上面；下次从主页选模块会显式重设。
 void return_to_main_menu()
 {
+    if (pomodoro_shown()) {
+        pomodoro_hide();   // 计时数据由 classic 核心后台继续维护
+    }
     if (game_bind_page_active()) {
         game_bind_page_close();
     }
@@ -140,6 +145,9 @@ bool activate_main_menu_selection(TickType_t now)
         active_work_page_store(kWorkPageGameBoy);
     } else if (action == MainMenuAction::kSettings) {
         enter_settings_primary_menu(now);
+    } else if (action == MainMenuAction::kPomodoro) {
+        classic_init();
+        pomodoro_show();
     } else {
         return false;  // kNone，空模块
     }
@@ -438,6 +446,123 @@ void poll_gamepad_in_game_list(TickType_t now)
     }
 }
 
+// 番茄钟页手柄语义（独吞这一轮输入）：
+//   A(边沿)           = 开始 / 暂停
+//   上/下(边沿+连发)  = 选 MODE（专注/短休/长休，选中即切换并重置）
+//   左/右(边沿)       = 选 MODE（同上，便于单向操作）
+//   B(边沿)           = 返回主页（计时后台继续）
+//   LB+RB(边沿)       = 回主页（由调用前的全局肩键处理完成）
+// 返回 true 表示本帧确实处理了输入（调用方据此 notify UI）。
+bool poll_gamepad_pomodoro(TickType_t now)
+{
+    if (pad_state() != PAD_STATE_READY) return false;
+    bool acted = false;
+
+    // LB+RB 同按 → 回主菜单（边沿，与全局导航一致）。
+    static bool shoulder_home_was = false;
+    const bool shoulder_home = pad_shoulders() == 0x03;
+    if (shoulder_home && !shoulder_home_was) {
+        ESP_LOGI(TAG, "pomodoro LB+RB: return to main menu");
+        return_to_main_menu();
+        shoulder_home_was = true;
+        return true;
+    }
+    shoulder_home_was = shoulder_home;
+    if (shoulder_home) return false;
+
+    const bool pad_up = pad_button(GB_BTN_UP);
+    const bool pad_down = pad_button(GB_BTN_DOWN);
+    const bool pad_left = pad_button(GB_BTN_LEFT);
+    const bool pad_right = pad_button(GB_BTN_RIGHT);
+    const bool pad_a = pad_button(GB_BTN_A);
+    const bool pad_b = pad_button(GB_BTN_B);
+
+    // A：单击 = 开始 / 暂停；双击 = 重置番茄钟。
+    // 单击必须延迟到双击窗口结束才执行，否则双击会先误触发一次开始/暂停。
+    static bool a_was = false;
+    static TickType_t a_pending = 0;
+    const bool a_now = pad_a;
+    if (a_now && !a_was) {
+        if (a_pending != 0 &&
+            (TickType_t)(now - a_pending) <= kBootDoubleClickTicks) {
+            // 双击成立：重置到专注第 1 节。
+            a_pending = 0;
+            classic_reset();
+            ESP_LOGI(TAG, "pomodoro pad A double-click: reset");
+            acted = true;
+        } else {
+            a_pending = now;   // 第一击，等窗口确认是否双击
+        }
+    }
+    a_was = a_now;
+    // 双击窗口过去仍无第二击 → 单击，执行开始/暂停。
+    if (a_pending != 0 &&
+        (TickType_t)(now - a_pending) > kBootDoubleClickTicks) {
+        a_pending = 0;
+        classic_toggle_start_pause();
+        acted = true;
+    }
+
+    // B：返回主页（边沿，计时后台继续）。
+    static bool b_was = false;
+    const bool b_now = pad_b;
+    if (b_now && !b_was) {
+        return_to_main_menu();
+        acted = true;
+    }
+    b_was = b_now;
+
+    // 上下：选 MODE，边沿 + 连发。当前阶段即选中行，循环 0..2。
+    static int ud_dir = 0;
+    static TickType_t ud_repeat_at = 0;
+    static bool ud_repeating = false;
+    const int ud = pad_down ? 1 : (pad_up ? -1 : 0);
+    bool mode_step = false;
+    if (ud == 0) {
+        ud_repeat_at = 0;
+        ud_repeating = false;
+    } else if (ud != ud_dir) {
+        mode_step = true;
+        ud_repeat_at = now;
+        ud_repeating = false;
+    } else if (!ud_repeating &&
+               (TickType_t)(now - ud_repeat_at) >= kGamepadRepeatFirstTicks) {
+        mode_step = true;
+        ud_repeat_at = now + kGamepadRepeatNextTicks;
+        ud_repeating = true;
+    } else if (ud_repeating &&
+               (TickType_t)(now - ud_repeat_at) >= kGamepadRepeatNextTicks) {
+        mode_step = true;
+        ud_repeat_at = now + kGamepadRepeatNextTicks;
+    }
+    ud_dir = ud;
+    if (mode_step) {
+        ClassicSnapshot snap = {};
+        classic_get_snapshot(&snap);
+        int mode = snap.selected_mode + (ud > 0 ? 1 : -1);
+        if (mode < 0) mode = 2;
+        if (mode > 2) mode = 0;
+        classic_select_mode(mode);
+        acted = true;
+    }
+
+    // 左右：选 MODE，短按边沿（长按不切页，番茄钟无工作页概念）。
+    static int lr_dir = 0;
+    const int lr = pad_right ? 1 : (pad_left ? -1 : 0);
+    if (lr != lr_dir && lr != 0) {
+        ClassicSnapshot snap = {};
+        classic_get_snapshot(&snap);
+        int mode = snap.selected_mode + lr;
+        if (mode < 0) mode = 2;
+        if (mode > 2) mode = 0;
+        classic_select_mode(mode);
+        acted = true;
+    }
+    lr_dir = lr;
+
+    return acted;
+}
+
 // 手柄全局导航（工作页 / 设置页 / 信息页通用，游戏 ROM 列表页除外）。
 // 语义对齐用户要求：
 //   肩键 LB+RB 同时按(边沿) = 回主菜单（最高优先级，所有非游戏运行页生效）
@@ -571,14 +696,9 @@ bool poll_gamepad_global_nav(TickType_t now)
         if (in_settings) {
             // 等同 BOOT 短按：触发当前项动作
             settings_activity_record_action(now);
-        } else {
-            // 普通工作页：确认等同进设置（与物理 KEY 短按一致）
-            if (!settings_page_requested() && !info_page_requested() &&
-                !network_diag_page_requested() && !setup_portal_active_load()) {
-                enter_settings_primary_menu(now);
-            }
+            acted = true;
         }
-        acted = true;
+        // 普通工作页 A 键不再进设置：设置只能从主菜单第 8 个模块进入。
     }
     a_was = a_now;
 
@@ -1002,6 +1122,66 @@ void button_task(void *)
             continue;
         }
 
+        // 番茄钟页：独吞这一轮输入。手柄 A=开始/暂停、上下左右=选 MODE、
+        // B/LB+RB=回主页；物理 BOOT 单击=A、双击=从上到下循环切 MODE、KEY=B。
+        if (pomodoro_shown()) {
+            bool acted = poll_gamepad_pomodoro(now);
+            static bool boot_was = false, key_was = false;
+            // 物理 BOOT：单击要延迟到双击窗口结束才执行，否则双击会先误触发
+            // 一次开始/暂停。这里用番茄钟页独立的静态变量，不与游戏页的
+            // boot_pending_since 共用（两条分支都提前 continue，互不干扰）。
+            static TickType_t pom_boot_pending = 0;
+            if (boot_pressed && !boot_was) {
+                if (pom_boot_pending != 0 &&
+                    (TickType_t)(now - pom_boot_pending) <= kBootDoubleClickTicks) {
+                    // 双击成立：从上到下循环切 MODE（专注→短休→长休→专注）。
+                    pom_boot_pending = 0;
+                    ClassicSnapshot snap = {};
+                    classic_get_snapshot(&snap);
+                    int mode = snap.selected_mode + 1;
+                    if (mode > 2) mode = 0;
+                    classic_select_mode(mode);
+                    ESP_LOGI(TAG, "pomodoro BOOT double-click: mode=%d", mode);
+                    acted = true;
+                } else {
+                    pom_boot_pending = now;   // 第一击，等窗口确认是否双击
+                }
+            }
+            boot_was = boot_pressed;
+            // 双击窗口过去仍无第二击 → 单击，执行开始/暂停。
+            if (pom_boot_pending != 0 &&
+                (TickType_t)(now - pom_boot_pending) > kBootDoubleClickTicks) {
+                pom_boot_pending = 0;
+                classic_toggle_start_pause();
+                acted = true;
+            }
+            // 物理 KEY：单击 = 返回主页；双击 = 重置番茄钟。
+            // 单击延迟到双击窗口结束，避免双击先误触发返回主页。
+            static TickType_t pom_key_pending = 0;
+            if (key_pressed && !key_was) {
+                if (pom_key_pending != 0 &&
+                    (TickType_t)(now - pom_key_pending) <= kBootDoubleClickTicks) {
+                    // 双击成立：重置到专注第 1 节。
+                    pom_key_pending = 0;
+                    classic_reset();
+                    ESP_LOGI(TAG, "pomodoro KEY double-click: reset");
+                    acted = true;
+                } else {
+                    pom_key_pending = now;   // 第一击，等窗口确认是否双击
+                }
+            }
+            key_was = key_pressed;
+            if (pom_key_pending != 0 &&
+                (TickType_t)(now - pom_key_pending) > kBootDoubleClickTicks) {
+                pom_key_pending = 0;
+                return_to_main_menu();
+                acted = true;
+            }
+            if (acted) notify_ui_task();
+            vTaskDelay(pdMS_TO_TICKS(kGamepadPollMs));
+            continue;
+        }
+
         // 刚退出游戏：等用户把两个键都松开再恢复正常语义（见文件上方说明）。
         if (!boot_pressed && !key_pressed) {
             s_swallow_until_release = false;
@@ -1058,7 +1238,11 @@ void button_task(void *)
             if (game_idle_page) {
                 poll_gamepad_in_game_list(now);
             } else {
-                poll_gamepad_global_nav(now);
+                // 全局导航返回 acted 表示本帧确实处理了手柄输入。必须在这里
+                // notify UI，否则设置页手柄 A 确认只靠 UI 任务自己的 seq 轮询，
+                // 墨水屏 idle 下几百毫秒才跳一次，按 A 像没反应；物理 BOOT 确认
+                // 有 notify（见下方 boot 分支），两边体验必须一致。B 返回同理。
+                if (poll_gamepad_global_nav(now)) notify_ui_task();
             }
         }
 
@@ -1132,13 +1316,7 @@ void button_task(void *)
                 if (settings_page_requested()) {
                     settings_activity_record(now);
                 }
-                if (!key_press_stopped_alert && !game_idle_page &&
-                    !settings_page_requested() && !info_page_requested() && !network_diag_page_requested()) {
-                    ESP_LOGI(TAG, BUTTON_SHOW_SETTINGS_LOG_FORMAT);
-                    enter_settings_primary_menu(now);
-                    key_press_opened_settings = true;
-                    notify_ui_task();
-                }
+                // 普通工作页 KEY 短按不再进设置：设置只能从主菜单第 8 个模块进入。
             } else if (!key_press_stopped_alert &&
                        !key_press_opened_settings &&
                        !key_long_handled &&
@@ -1146,14 +1324,6 @@ void button_task(void *)
                        button_press_is_long(now - key_pressed_since)) {
                 settings_activity_record(now);
                 handle_settings_key_long_or_busy();
-                key_long_handled = true;
-                notify_ui_task();
-            } else if (!key_long_handled &&
-                       game_idle_page &&
-                       button_press_is_long(now - key_pressed_since)) {
-                // 游戏页 idle：长按 KEY 进设置（短按留给“开始游戏”）。
-                ESP_LOGI(TAG, BUTTON_GAME_SETTINGS_LOG);
-                enter_settings_primary_menu(now);
                 key_long_handled = true;
                 notify_ui_task();
             } else if (!key_long_handled &&

@@ -10,6 +10,7 @@ enum class AuxiliaryPage {
     kNetworkDiagnostics,
     kSettings,
     kMainMenu,
+    kPomodoro,
     kCount,
 };
 

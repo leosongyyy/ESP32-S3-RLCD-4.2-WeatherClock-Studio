@@ -300,6 +300,33 @@ def render_svg(path, size, stroke=1.0, threshold=160, ss=None, width_px=None):
     return small.point(lambda p: 0 if p < threshold else 255).convert("1")
 
 
+def render_filled_svg(path, size, threshold=128):
+    """把一个纯填充式 SVG 渲染成 size x size 的 1bit 图（0=黑，255=白）。
+
+    与 render_svg 不同，这类图标（如用户提供的番茄）不带 stroke，完全靠
+    path 的填充轮廓成形。逐条闭合子路径用 polygon 填黑，路径自身的环绕
+    关系自然留出镂空。按目标分辨率 1 倍硬边栅格化，不做超采样。
+    """
+    root = ET.parse(str(path)).getroot()
+    vb = [float(v) for v in root.get("viewBox", "0 0 24 24").replace(",", " ").split()]
+    vx, vy, vw, vh = vb
+    scale = size / max(vw, vh)
+    small = Image.new("L", (size, size), 255)
+    dr = ImageDraw.Draw(small)
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]
+        if tag != "path":
+            continue
+        if any(k in el.attrib for k in ("transform", "clip-path", "mask")):
+            raise ValueError("填充图标不应含 transform/clip-path/mask，请人工处理")
+        for pts, closed in _shapes(el):
+            if not closed or len(pts) < 3:
+                continue
+            sp = [((x - vx) * scale, (y - vy) * scale) for x, y in pts]
+            dr.polygon(sp, fill=0)
+    return small.point(lambda p: 0 if p < threshold else 255).convert("1")
+
+
 def icon(name, size, **kw):
     """按图标名渲染，例如 icon('gamepad-2', 32)。"""
     return render_svg(ICON_DIR / (name + ".svg"), size, **kw)

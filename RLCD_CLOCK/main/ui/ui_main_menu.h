@@ -10,6 +10,7 @@ enum class MainMenuAction {
     kWeatherClock,  // 天气时钟工作页
     kGameBoy,       // 游戏工作页
     kSettings,      // 设置辅助页
+    kPomodoro,      // 番茄钟页
 };
 
 void build_main_menu_ui();

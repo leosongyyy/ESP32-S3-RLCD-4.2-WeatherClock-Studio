@@ -426,16 +426,6 @@ bool work_page_order_swapped_copy_preserving_home(int first_index,
 int next_enabled_work_page(int current_page)
 {
     const uint8_t page_mask = work_page_enabled_mask_load();
-    // 调试期临时日志：每次翻页都把掩码打出来。放在这里而不是启动路径里，
-    // 是因为启动时的日志会被串口打开前那 1 秒多的时间差吃掉，根本读不到。
-    // 验证完必须删掉。
-    extern int g_page_mask_source;
-    extern uint8_t g_page_mask_raw;
-    ESP_LOGI("PageCfg",
-             "mask=0x%02x current=%d game_bit=%d src=%d raw=0x%02x",
-             page_mask, current_page,
-             (page_mask & work_page_mask(kWorkPageGameBoy)) != 0,
-             g_page_mask_source, g_page_mask_raw);
     uint8_t order[kWorkPageCount] = {};
     if (!copy_normalized_work_page_order(order, sizeof(order), page_mask)) {
         return kFallbackWorkPage;
@@ -449,8 +439,16 @@ int next_enabled_work_page(int current_page)
     }
     int current_index = work_page_order_policy::index_of(
         order, sizeof(order), current_page);
+    // 游戏页只能从主菜单进入，不参与左右/上下工作页循环。若算出的下一页
+    // 是游戏页，就再往后跳一页（最多绕一圈，因此不会死循环）。
     int next_index = work_page_order_policy::next_enabled_index(
         order, sizeof(order), page_mask, current_index);
+    for (int guard = 0; guard < kWorkPageCount &&
+         work_page_order_policy::index_found(next_index) &&
+         order[next_index] == kWorkPageGameBoy; ++guard) {
+        next_index = work_page_order_policy::next_enabled_index(
+            order, sizeof(order), page_mask, next_index);
+    }
     return work_page_order_policy::index_found(next_index)
                ? order[next_index]
                : kFallbackWorkPage;
@@ -458,8 +456,8 @@ int next_enabled_work_page(int current_page)
 
 int prev_enabled_work_page(int current_page)
 {
-    // 用 next 走一圈找到前驱：next(page)==current 的那个启用页。
-    // 只有 8 个页面，最多 8 步，开销可忽略；不碰工作页顺序策略层。
+    // 直接在顺序数组上往回找"启用且非游戏页"的前驱。游戏页只能从主菜单进，
+    // 不参与左右/上下循环，因此这里必须跳过它，否则会倒着切进游戏页。
     const uint8_t page_mask = work_page_enabled_mask_load();
     uint8_t order[kWorkPageCount] = {};
     if (!copy_normalized_work_page_order(order, sizeof(order), page_mask)) {
@@ -470,12 +468,14 @@ int prev_enabled_work_page(int current_page)
         page = order[work_page_order_policy::first_enabled_index(
             order, sizeof(order), page_mask)];
     }
-    for (int step = 0; step < kWorkPageCount; ++step) {
-        const int next = next_enabled_work_page(page);
-        if (next == current_page) {
-            return page;
+    int index = work_page_order_policy::index_of(order, sizeof(order), page);
+    for (int step = 1; step <= kWorkPageCount; ++step) {
+        int prev_index = (index - step + kWorkPageCount) % kWorkPageCount;
+        int candidate = order[prev_index];
+        if (work_page_order_policy::page_is_enabled(candidate, page_mask) &&
+            candidate != kWorkPageGameBoy) {
+            return candidate;
         }
-        page = next;
     }
     return current_page;
 }

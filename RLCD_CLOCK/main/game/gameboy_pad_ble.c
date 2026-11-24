@@ -108,6 +108,15 @@ static volatile uint32_t s_last_visible_ms;
 static bool             s_remote_active;
 static bool             s_was_visible;
 
+// 全页面保活 + 离线超时关闭：
+//   s_offline_since_ms = 0  表示当前在线（连着手柄或尚未开始计时）；
+//   非 0 表示从这一刻起手柄离线，服务任务在超过 PAD_OFFLINE_CLOSE_MS 后
+//   主动 pad_stop() 关 BLE 省电。连接成功清零，断连/启动时置为当前时刻。
+static uint32_t s_offline_since_ms;
+// 是否因"离线超时"主动关闭。为真时页面可见不再自愈重开，必须由绑定页入口
+// 显式 pad_start() 才重开，符合"离线 5 分钟关闭 → 进绑定页再开启"的闭环。
+static bool s_offline_closed;
+
 // 最近一次尝试连接的目标（连接失败的事件里不带地址，只能在发起时记下来）
 static ble_addr_t s_attempt_addr;
 static uint32_t   s_avoid_until_ms;
@@ -2003,6 +2012,7 @@ static int pad_on_subscribe(uint16_t conn, const struct ble_gatt_error *err,
     s_subscribed = true;
     s_state = ST_READY;
     s_ready_since_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    s_offline_since_ms = 0;   // 连上手柄，停止离线计时
     ESP_LOGI(PAD_TAG, "HID ready: conn=%u report_val=%u cccd=%u notify=%d",
              conn, s_report_val, s_cccd_handle, (int)s_report_notifies);
 
@@ -2587,6 +2597,11 @@ static int pad_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGW(PAD_TAG, "disconnected, reason=%d", event->disconnect.reason);
         s_conn = BLE_HS_CONN_HANDLE_NONE;
+        // 手柄离线，开始 5 分钟倒计时（由服务任务到点关 BLE）。
+        // 若本就因主动 stop 断连，pad_stop() 已把计时清掉，这里不重复启动。
+        if (!s_stop_requested && s_offline_since_ms == 0) {
+            s_offline_since_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        }
         s_subscribed = false;
         s_disc_active = false;
         s_disc_started = false;
@@ -2689,6 +2704,7 @@ static void pad_host_task(void *param)
 
 bool pad_start(void)
 {
+    s_offline_closed = false;   // 显式开启（含绑定页重开）清除离线关闭标志
     if (s_state != ST_OFF && s_state != ST_ERROR) {
         s_stop_requested = false;
         return true;
@@ -2748,6 +2764,10 @@ bool pad_start(void)
     }
 
     s_state = ST_SCANNING;
+    // （重新）开启扫描即启动离线倒计时：5 分钟内连上手柄会清零，连不上则关 BLE。
+    if (s_offline_since_ms == 0) {
+        s_offline_since_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    }
     if (s_host_synced) {
         pad_begin_search();
     }
@@ -2763,6 +2783,7 @@ void pad_stop(void)
     }
 
     s_stop_requested = true;
+    s_offline_since_ms = 0;   // 已关闭，清掉离线倒计时；下次 pad_start 重新计时
 
     if (!s_nimble_inited) {
         s_state = ST_OFF;
@@ -2793,8 +2814,10 @@ void pad_stop(void)
 
 #define PAD_SERVICE_PERIOD_MS          20
 #define PAD_SERVICE_VISIBLE_TIMEOUT_MS 1500
-// 「可见」只用来判断用户在本页；真正关 BLE 要再等一段宽限。
-// 只是扫着（没连上）时短一点，纯省电；链路已建立时长一点——见 pad_service_task()。
+// 全页面保活：BLE 不再随页面切换而开关。只有手柄连续离线超过这个时长
+// （5 分钟）才主动关闭省电；用户进绑定页（主菜单双击 BOOT）时重新开启。
+#define PAD_OFFLINE_CLOSE_MS           (5 * 60 * 1000)
+// 注：下面两个 GRACE 常量保留但已不再参与关 BLE 判定（见 pad_service_task）。
 #define PAD_SERVICE_STOP_GRACE_IDLE_MS 3000
 #define PAD_SERVICE_STOP_GRACE_LINK_MS 20000
 #define PAD_SERVICE_TASK_STACK         4096
@@ -2925,37 +2948,40 @@ static void pad_service_task(void *arg)
                              (uint32_t)(now - s_last_visible_ms) <
                                  PAD_SERVICE_VISIBLE_TIMEOUT_MS;
 
+        // 全页面保活：不再因"页面不可见"关 BLE。页面切换、停在天气钟/设置
+        // 等任何页面都不再断连。关 BLE 的唯一条件是手柄离线超过 5 分钟。
         if (visible) {
-            // 可见性上升沿 = 用户重新进入本页，给一次全新的尝试机会：
-            // 清掉上次「假连接」计数，并把 ERROR 复位，否则一次失败会把
-            // 本页后续所有进入都锁死，只能重启机器。
+            // 可见性上升沿仍用于自愈：清掉「假连接」计数并把 ERROR 复位，
+            // 让一次失败不至于把后续所有尝试锁死。
             if (!s_was_visible) {
                 s_empty_ready_count = 0;
                 if (s_state == ST_ERROR) {
                     s_state = ST_OFF;
                 }
             }
-            if (s_state == ST_OFF) {
-                (void)pad_start();
-            }
-        } else if (s_state != ST_OFF && s_state != ST_ERROR) {
-            // ⚠ 关 BLE 必须比"可见性"宽松得多。
-            // 进绑定页 / 切游戏列表时电子纸要整屏刷新，UI 任务会被阻塞 1~3 秒，
-            // 这期间没人调 pad_service_notify_visible()。原来用 1500ms 的可见性
-            // 窗口直接 pad_stop()，于是「一进绑定页就断连，再花十几秒重连」——
-            // 现场日志里 `pad stopped` 紧跟 `disconnected reason=534` 就是它。
-            // 现在改成"离开页面后宽限 N 毫秒"，且链路已建立时给更长宽限。
-            const uint32_t invisible_ms = (s_last_visible_ms == 0)
-                                              ? 0xFFFFFFFFu
-                                              : (uint32_t)(now - s_last_visible_ms);
-            const bool link_up = (s_conn != BLE_HS_CONN_HANDLE_NONE);
-            const uint32_t grace = link_up ? PAD_SERVICE_STOP_GRACE_LINK_MS
-                                           : PAD_SERVICE_STOP_GRACE_IDLE_MS;
-            if (invisible_ms > grace) {
-                pad_stop();
-            }
         }
         s_was_visible = visible;
+
+        // 全页面保活：ST_OFF 时无条件自愈启动，不再依赖页面是否可见。
+        // 这样开机停在天气钟页（不喂 visible）也会自动开启 BLE。
+        // 唯一例外是"离线超时主动关闭"——保持关闭，必须进绑定页显式重开。
+        if (s_state == ST_OFF && !s_offline_closed) {
+            (void)pad_start();
+        }
+
+        // 离线超时关闭：与页面可见性无关，独立每帧判定。s_offline_since_ms != 0
+        // 表示手柄当前离线，连续 5 分钟没连上（重连由 pad_poll 持续尝试）就关
+        // BLE 省电。连上手柄时订阅成功会把计时清零，这里自然不触发。
+        // ⚠ 必须放在 visible 分支之外：用户可能一直停在喂 visible 的页面，
+        // 若放进 else 分支，那种情况下 5 分钟超时永远不会生效。
+        if (s_state != ST_OFF && s_state != ST_ERROR &&
+            s_offline_since_ms != 0 &&
+            (uint32_t)(now - s_offline_since_ms) > PAD_OFFLINE_CLOSE_MS) {
+            ESP_LOGI(PAD_TAG, "gamepad offline > %d ms, stop BLE to save power",
+                     PAD_OFFLINE_CLOSE_MS);
+            pad_stop();
+            s_offline_closed = true;   // 之后只能由绑定页入口显式重开
+        }
 
         // 配对兜底：发起 ble_gap_security_initiate() 之后，有些设备既不返回
         // 错误也永远不来 ENC_CHANGE（例如对端不支持加密、或压根不理这个请求）。

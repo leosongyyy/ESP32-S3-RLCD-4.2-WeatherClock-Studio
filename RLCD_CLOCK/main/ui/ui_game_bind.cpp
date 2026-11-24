@@ -555,6 +555,11 @@ void format_action_line(char *out, size_t out_bytes)
 void game_bind_page_open()
 {
     s_active = true;
+    // 进绑定页 = 显式重新开启蓝牙。尤其是手柄离线 5 分钟后 BLE 已被
+    // 主动关闭（ST_OFF + 离线关闭标志），这里 pad_start() 把它拉回来重新
+    // 扫描/回连。pad_start() 幂等，正常在线时调用也只是清 stop 请求。
+    pad_service_ensure();
+    pad_start();
     // 选中项复位到第一个：绑定是一次性流程，从 A 开始最顺手，也让上一次
     // 停在半途的页码不会莫名其妙留在那里。
     s_current = 0;
