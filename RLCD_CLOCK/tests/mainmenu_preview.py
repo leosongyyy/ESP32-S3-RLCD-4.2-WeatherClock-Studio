@@ -115,10 +115,17 @@ pt(W - 6 - tw("SYS V1.08"), TITLE_Y + 6, "SYS V1.08")
 hline(0, W - 1, TITLE_Y + 25)
 
 # ---------- 卡片网格 ----------
-GRID_TOP = TITLE_Y + 28
-CARD_W, CARD_H = 94, 100
-GAP_X, GAP_Y = 6, 5
-X0 = (W - (CARD_W * 4 + GAP_X * 3)) // 2
+# 4x2 模块在「标题栏分隔线 ~ 按键栏」之间上下左右居中、等距分散，
+# 行距 = 列距 = 左右边距 = 上下边距，消除底部空白。
+CARD_W, CARD_H = 90, 104
+GAP_X, GAP_Y = 9, 9
+X0 = (W - (CARD_W * 4 + GAP_X * 3)) // 2          # 左右边距相等
+GRID_TOP_MIN = TITLE_Y + 26                        # 标题栏分隔线下方
+GRID_BOTTOM_MAX = 282 - 4                          # 按键栏上方留边
+_grid_h = CARD_H * 2 + GAP_Y
+GRID_TOP = GRID_TOP_MIN + (GRID_BOTTOM_MAX - GRID_TOP_MIN - _grid_h) // 2
+B = CARD_H - 100                                   # 下半部分下沉量，填满加高后的卡片
+SELECTED = 0                                       # 当前选中模块索引，双框显示
 
 cards = [
     ("WEATHER",      "天气时钟", "weather"),
@@ -142,51 +149,52 @@ for i, (en, zh, key) in enumerate(cards):
     col, row = i % 4, i // 4
     x = X0 + col * (CARD_W + GAP_X)
     y = GRID_TOP + row * (CARD_H + GAP_Y)
+    # 未选中单线框；选中模块加一圈内框形成双框，与其它模块区分
     frame(x, y, x + CARD_W, y + CARD_H)
-    if i == 0:
-        frame(x + 2, y + 2, x + CARD_W - 2, y + CARD_H - 2)
+    if i == SELECTED:
+        frame(x + 3, y + 3, x + CARD_W - 3, y + CARD_H - 3)
     cx = x + CARD_W // 2
     img.paste(lr.icon(ICON_NAMES[key], ICON_SIZE),
-              (cx - ICON_SIZE // 2, y + 6))
+              (cx - ICON_SIZE // 2, y + 10))
     # 英文标题：长词用负字距收紧，避免超出卡片宽
     extra = -1 if len(en) > 9 else 0
-    pt_center(cx, y + 46, en, extra=extra)
-    pt_center(cx, y + 57, zh)
-    hline(x + 6, x + CARD_W - 6, y + 74)
+    pt_center(cx, y + 50, en, extra=extra)
+    pt_center(cx, y + 61, zh)
+    hline(x + 6, x + CARD_W - 6, y + 78)
     # 状态行
     if key == "weather":
-        pt_center(cx, y + 79, "26/09:41")
+        pt_center(cx, y + 83, "26/09:41")
     elif key == "pomodoro":
-        pt(x + 10, y + 79, "25:00")
+        pt(x + 10, y + 83, "25:00")
         for k in range(4):
             bx = x + 48 + k * 9
             if k < 3:
-                rect(bx, y + 80, bx + 6, y + 86)
+                rect(bx, y + 84, bx + 6, y + 90)
             else:
-                frame(bx, y + 80, bx + 6, y + 86)
+                frame(bx, y + 84, bx + 6, y + 90)
     elif key == "games":
-        pt_center(cx, y + 79, "HI 12480")
+        pt_center(cx, y + 83, "HI 12480")
     elif key == "reading":
-        pt(x + 8, y + 79, "38%")
+        pt(x + 8, y + 83, "38%")
         for k in range(6):
             bx = x + 36 + k * 8
             if k < 2:
-                rect(bx, y + 80, bx + 6, y + 86)
+                rect(bx, y + 84, bx + 6, y + 90)
             else:
-                frame(bx, y + 80, bx + 6, y + 86)
+                frame(bx, y + 84, bx + 6, y + 90)
     elif key == "music":
-        pt_center(cx, y + 77, "NOW PLAYING", extra=-1)
+        pt_center(cx, y + 81, "NOW PLAYING", extra=-1)
         for k, hh in enumerate((3, 5, 8, 4, 9, 6, 3, 8, 5)):
             bx = x + 18 + k * 7
-            rect(bx, y + 97 - hh, bx + 4, y + 97)
+            rect(bx, y + 101 - hh, bx + 4, y + 101)
     elif key == "news":
-        pt_center(cx, y + 79, "12 NEW")
+        pt_center(cx, y + 83, "12 NEW")
     elif key == "ai":
-        pt_center(cx, y + 79, "READY")
+        pt_center(cx, y + 83, "READY")
     elif key == "settings":
-        pt(x + 8, y + 79, "EN")
-        pt(x + 26, y + 78, "/中")
-        pt(x + 56, y + 78, "双语")
+        pt(x + 8, y + 83, "EN")
+        pt(x + 26, y + 82, "/中")
+        pt(x + 56, y + 82, "双语")
 
 # ---------- 底部按键提示栏 ----------
 BAR_Y = 282
