@@ -1,5 +1,5 @@
 """由 tools/gen_pixel_font.py 自动生成，勿手工编辑。"""
-# Fusion Pixel 12px proportional zh_hans 取模字库（仅含项目实际用到的字符）
+# Fusion Pixel 12px proportional 取模字库（仅含项目实际用到的字符）
 # glyph = (w, h, xoff, yoff, dw, row_bytes, rows)
 # BDF 位图行是 MSB 左对齐：第 col 列 = 行值 bit (row_bytes*8-1-col)
 FONT_SIZE = 12

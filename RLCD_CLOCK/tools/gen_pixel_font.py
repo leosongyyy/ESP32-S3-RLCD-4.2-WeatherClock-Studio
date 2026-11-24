@@ -78,28 +78,35 @@ def parse_bdf(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--bdf', required=True, help='fusion-pixel-12px-zh_hans.bdf 路径')
+    ap.add_argument('--bdf', required=True, help='fusion-pixel BDF 路径')
+    ap.add_argument('--size', type=int, default=12, help='字号 8/10/12，决定 FONT_ASCENT 与 C 符号前缀')
     ap.add_argument('--src', default='main', help='扫描中文的源码根目录')
     ap.add_argument('--extra', default='', help='额外需要取模的字符（预览静态文本等）')
+    ap.add_argument('--latin-only', action='store_true', help='只导出 ASCII，不扫描源码中文（用于小号英文字库）')
     ap.add_argument('--py-out', default='tests/fusion_pixel_font.py')
     ap.add_argument('--h-out', default='main/assets/fusion_pixel_12_font.h')
     args = ap.parse_args()
 
     bdf_glyphs = parse_bdf(args.bdf)
-    wanted = set(ASCII) | set(SYMBOLS) | scan_source_cjk(args.src)
+    if args.latin_only:
+        wanted = set(ASCII)
+    else:
+        wanted = set(ASCII) | set(SYMBOLS) | scan_source_cjk(args.src)
     wanted |= set(args.extra)
     # 按码位排序，保证输出稳定
     cps = sorted({ord(c) for c in wanted if ord(c) in bdf_glyphs})
     missing = sorted({ord(c) for c in wanted if ord(c) not in bdf_glyphs})
 
-    FONT_H = 12
-    FONT_ASCENT = 9   # 大写字母墨迹高
-    FONT_DESCENT = 3
+    FONT_H = args.size
+    # 大写字母墨迹高：8px→6，10px→7，12px→9（实测 Fusion Pixel 各尺寸）
+    FONT_ASCENT = {8: 6, 10: 7, 12: 9}.get(args.size, 9)
+    FONT_DESCENT = FONT_H - FONT_ASCENT
+    SYM = f'fusion_pixel_{args.size}'   # C 符号前缀，避免多字号同时链接时冲突
 
     # 生成 Python 字库
     lines = [
         '"""由 tools/gen_pixel_font.py 自动生成，勿手工编辑。"""',
-        '# Fusion Pixel 12px proportional zh_hans 取模字库（仅含项目实际用到的字符）',
+        f'# Fusion Pixel {args.size}px proportional 取模字库（仅含项目实际用到的字符）',
         '# glyph = (w, h, xoff, yoff, dw, row_bytes, rows)',
         '# BDF 位图行是 MSB 左对齐：第 col 列 = 行值 bit (row_bytes*8-1-col)',
         f'FONT_SIZE = {FONT_H}',
@@ -135,7 +142,7 @@ def main():
 
     c = [
         '/* 由 tools/gen_pixel_font.py 自动生成，勿手工编辑。',
-        ' * 字体 Fusion Pixel (缝合像素) 12px proportional zh_hans，取模只保留项目实际用到的字符。',
+        f' * 字体 Fusion Pixel (缝合像素) {args.size}px proportional，取模只保留项目实际用到的字符。',
         f' * 字符数 {len(cps)}，点阵 blob {len(blob)} 字节。',
         ' * 来源 https://fontpixel.com/zh/fonts/fusion-pixel/  作者 TakWolf (c) 2022',
         ' * 许可 SIL Open Font License 1.1 (OFL-1.1)，允许商用/修改/再分发；取模字库沿用该许可。',
@@ -148,21 +155,21 @@ def main():
         '    uint16_t cp;',
         '    uint16_t off;   /* blob 内偏移 */',
         '    uint8_t  w, h, xoff, yoff, dw, row_bytes;',
-        '} fusion_glyph_t;',
+        f'}} {SYM}_glyph_t;',
         '',
-        'static const uint8_t fusion_pixel_bits[] = {',
+        f'static const uint8_t {SYM}_bits[] = {{',
     ]
     for i in range(0, len(blob), 16):
         chunk = blob[i:i + 16]
         c.append('    ' + ' '.join(f'0x{b:02X},' for b in chunk))
     c.append('};')
     c.append('')
-    c.append('static const fusion_glyph_t fusion_pixel_index[] = {')
+    c.append(f'static const {SYM}_glyph_t {SYM}_index[] = {{')
     for cp, off, w, h, xo, yo, dw, nb in entries:
         c.append(f'    {{0x{cp:04X}, {off}, {w}, {h}, {xo}, {yo}, {dw}, {nb}}},'
                  f" /* {chr(cp)!r} */")
     c.append('};')
-    c.append(f'#define FUSION_PIXEL_INDEX_COUNT {len(entries)}')
+    c.append(f'#define {SYM.upper()}_INDEX_COUNT {len(entries)}')
     c.append('')
     pathlib.Path(args.h_out).write_text('\n'.join(c) + '\n', encoding='utf-8')
 

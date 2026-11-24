@@ -41,6 +41,16 @@ def pt_center(cx, top, s, scale=1, extra=0, c=INK):
     pt(cx - tw(s, scale, extra) // 2, top, s, scale, extra, c)
 
 
+def pts(x, top, s, extra=0, c=INK):
+    """8px 小英文字库，按顶部对齐。"""
+    return pf.small_draw(img, x, top + pf.SMALL_ASCENT, s, 1, extra, c)
+
+
+def pts_center(cx, top, s, extra=0, c=INK):
+    w = pf.small_text_w(s, 1, extra)
+    pts(cx - w // 2, top, s, extra, c)
+
+
 def rect(x0, y0, x1, y1, c=INK):
     d.rectangle((x0, y0, x1, y1), fill=c)
 
@@ -158,10 +168,11 @@ for i, (en, zh, key) in enumerate(cards):
     cx = x + CARD_W // 2
     img.paste(lr.icon(ICON_NAMES[key], ICON_SIZE),
               (cx - ICON_SIZE // 2, y + 10))
-    # 英文标题：长词用负字距收紧，避免超出卡片宽
-    extra = -1 if len(en) > 9 else 0
-    pt_center(cx, y + 50, en, extra=extra)
-    pt_center(cx, y + 61, zh)
+    # 英文副标题用 8px 小字库（比 12px 中文小一圈），长词用负字距收紧；
+    # 中文主标题下移，两者之间留出约 4px 行间距
+    extra = -1 if len(en) > 11 else 0
+    pts_center(cx, y + 49, en, extra=extra)
+    pt_center(cx, y + 62, zh)
     hline(x + 6, x + CARD_W - 6, y + 78)
     # 状态行
     if key == "weather":
@@ -227,7 +238,7 @@ for k in range(4):
 
 out = "mainmenu_preview.png"
 img.resize((W * 3, H * 3), Image.NEAREST).save(out)
-print("wrote", out, "字体:", len(pf.GLYPHS), "字模")
+print("wrote", out, "字体: 主字库+8px英文小字库")
 
 # 越界自检
 for y in range(H):

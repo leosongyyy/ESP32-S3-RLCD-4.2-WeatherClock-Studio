@@ -1,5 +1,5 @@
 /* 由 tools/gen_pixel_font.py 自动生成，勿手工编辑。
- * 字体 Fusion Pixel (缝合像素) 12px proportional zh_hans，取模只保留项目实际用到的字符。
+ * 字体 Fusion Pixel (缝合像素) 12px proportional，取模只保留项目实际用到的字符。
  * 字符数 572，点阵 blob 10958 字节。
  * 来源 https://fontpixel.com/zh/fonts/fusion-pixel/  作者 TakWolf (c) 2022
  * 许可 SIL Open Font License 1.1 (OFL-1.1)，允许商用/修改/再分发；取模字库沿用该许可。
@@ -12,9 +12,9 @@ typedef struct {
     uint16_t cp;
     uint16_t off;   /* blob 内偏移 */
     uint8_t  w, h, xoff, yoff, dw, row_bytes;
-} fusion_glyph_t;
+} fusion_pixel_12_glyph_t;
 
-static const uint8_t fusion_pixel_bits[] = {
+static const uint8_t fusion_pixel_12_bits[] = {
     0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x80, 0xA0, 0xA0, 0xA0, 0x48, 0x48, 0xFC, 0x48,
     0x48, 0x48, 0xFC, 0x48, 0x48, 0x20, 0x70, 0xA8, 0xA0, 0xA0, 0x70, 0x28, 0x28, 0xA8, 0x70, 0x20,
     0x44, 0xA4, 0x48, 0x08, 0x10, 0x20, 0x24, 0x4A, 0x44, 0x30, 0x48, 0x48, 0x30, 0x64, 0x94, 0x88,
@@ -702,7 +702,7 @@ static const uint8_t fusion_pixel_bits[] = {
     0x00, 0x00, 0x00, 0xC0, 0xC0, 0x70, 0x88, 0x88, 0x08, 0x10, 0x20, 0x20, 0x00, 0x20,
 };
 
-static const fusion_glyph_t fusion_pixel_index[] = {
+static const fusion_pixel_12_glyph_t fusion_pixel_12_index[] = {
     {0x0020, 0, 0, 0, 0, 0, 6, 0}, /* ' ' */
     {0x0021, 0, 1, 9, 1, 0, 4, 1}, /* '!' */
     {0x0022, 9, 3, 3, 1, 6, 6, 1}, /* '"' */
@@ -1276,5 +1276,5 @@ static const fusion_glyph_t fusion_pixel_index[] = {
     {0xFF1A, 10941, 2, 8, 2, 0, 12, 1}, /* '：' */
     {0xFF1F, 10949, 5, 9, 0, 0, 12, 1}, /* '？' */
 };
-#define FUSION_PIXEL_INDEX_COUNT 572
+#define FUSION_PIXEL_12_INDEX_COUNT 572
 
