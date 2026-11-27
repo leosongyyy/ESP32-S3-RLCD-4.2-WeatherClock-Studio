@@ -11,6 +11,7 @@ enum class AuxiliaryPage {
     kSettings,
     kMainMenu,
     kPomodoro,
+    kReading,   // 阅读模块（书库 + 正文，共用一张 canvas）
     kCount,
 };
 

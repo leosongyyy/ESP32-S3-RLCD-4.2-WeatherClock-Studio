@@ -1,5 +1,6 @@
 // 初始化硬件、系统服务和常驻任务，是固件应用入口。
 #include "app_display_config.h"
+#include "book_store.h"
 #include "app_event_group.h"
 #include "app_event_group_internal.h"
 #include "app_hardware.h"
@@ -432,6 +433,7 @@ extern "C" void app_main(void)
     // ROM 平时只在进入游戏页时才碰卡，没有这段就只能在有人按 BOOT 键翻页时
     // 才看得到硬件到底认没认到卡——启动阶段又抓不到日志。
     rom_store_startup_selfcheck();
+    book_store_startup_selfcheck();
 
     if (setup_prompt_playback_pending()) {
         vTaskDelay(pdMS_TO_TICKS(kSetupPromptStartDelayMs));

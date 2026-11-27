@@ -281,7 +281,7 @@ constexpr Card kCards[8] = {
     {"WEATHER",      "天气时钟", "cloud_sun_34",  MainMenuAction::kWeatherClock},
     {"POMODORO",     "番茄钟",   "timer_34",      MainMenuAction::kPomodoro},
     {"GAMES",        "游戏",     "gamepad_2_34",  MainMenuAction::kGameBoy},
-    {"READING",      "阅读",     "book_open_34",  MainMenuAction::kNone},
+    {"READING",      "阅读",     "book_open_34",  MainMenuAction::kBookshelf},
     {"MUSIC",        "音乐",     "music_34",      MainMenuAction::kNone},
     {"NEWS",         "新闻",     "newspaper_34",  MainMenuAction::kNone},
     {"AI ASSISTANT", "AI助手",   "bot_34",        MainMenuAction::kNone},
@@ -400,8 +400,42 @@ void draw_title_bar()
     text12(W - 6 - text_width12(ver), TITLE_Y + 8, ver);
 }
 
+// 最近一次有效的本地时间，供局部重画使用。
+// 主菜单的局部重画（跨天、选中态切换、番茄卡片联动）都拿不到时间参数，
+// 而画星期必须有它，所以由 update_main_menu 每帧写入，draw_card 兜底取用。
+struct tm g_last_local = {};
+bool g_last_local_valid = false;
+
+// 天气卡片状态行文本：星期几，逢节气追加「 节气」。
+// draw_card 与 update_main_menu 共用，保证「判脏」和「实际绘制」永远一致。
+void weather_status_text(const struct tm *local, char *out, size_t cap)
+{
+    static constexpr const char *kWeekdays[7] = {
+        "周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+    int wday = local ? local->tm_wday : 3;
+    if (wday < 0 || wday > 6) wday = 3;
+    const char *term = nullptr;
+    if (local) {
+        term = calendar_solar_term_text(local->tm_year + 1900,
+                                        local->tm_mon + 1, local->tm_mday);
+    }
+    if (term && term[0]) {
+        snprintf(out, cap, "%s %s", kWeekdays[wday], term);
+    } else {
+        snprintf(out, cap, "%s", kWeekdays[wday]);
+    }
+}
+
 void draw_card(int i, const struct tm *local, bool selected)
 {
+    // 局部重画没有时间上下文，用主循环写入的最近一份有效时间兜底。
+    if (local) {
+        g_last_local = *local;
+        g_last_local_valid = true;
+    } else if (g_last_local_valid) {
+        local = &g_last_local;
+    }
+
     int col = i % 4, row = i / 4;
     int x = X0 + col * (CARD_W + GAP_X);
     int y = row == 0 ? ROW0_TOP : ROW1_TOP;
@@ -424,22 +458,8 @@ void draw_card(int i, const struct tm *local, bool selected)
 
     // 状态行（沿用预览的静态占位数据）
     if (i == 0) {  // weather：当天星期几，逢节气追加「 节气」
-        static constexpr const char *kWeekdays[7] = {
-            "周日", "周一", "周二", "周三", "周四", "周五", "周六"};
-        int wday = local ? local->tm_wday : 3;
-        if (wday < 0 || wday > 6) wday = 3;
         char status[24];
-        const char *term = nullptr;
-        if (local) {
-            int year = local->tm_year + 1900;
-            int mon = local->tm_mon + 1;
-            term = calendar_solar_term_text(year, mon, local->tm_mday);
-        }
-        if (term && term[0]) {
-            snprintf(status, sizeof(status), "%s %s", kWeekdays[wday], term);
-        } else {
-            snprintf(status, sizeof(status), "%s", kWeekdays[wday]);
-        }
+        weather_status_text(local, status, sizeof(status));
         text12_center(cx, y + 83, status);
     } else if (i == 1) {  // pomodoro
         // 模式时长（25:00 专注 / 05:00 短休 / 15:00 长休）与今日完成数
@@ -668,7 +688,7 @@ bool update_main_menu(const struct tm *local, int battery_percent)
     static int last_bt = -1;
     static int last_wifi = -1;
     static int last_pomo_key = -1;
-    static int last_date_key = -1;
+    static char last_weather_status[24] = "";
 
     char time_key[64];
     snprintf(time_key, sizeof(time_key), "%04d%02d%02d%02d%02d",
@@ -701,10 +721,17 @@ bool update_main_menu(const struct tm *local, int battery_percent)
     const bool pomo_changed = pomo_key != last_pomo_key;
 
     // 天气卡片状态行（星期几 / 节气）按天变化，跨天重画卡片 0。
-    const int date_key = local ? (local->tm_year * 10000 +
-                                  (local->tm_mon + 1) * 100 + local->tm_mday)
-                               : 0;
-    const bool date_changed = date_key != last_date_key;
+    // 这里直接比「实际要显示的文本」，而不是比日期数字：绘制函数在拿不到
+    // 本地时间时画的是占位「周三」，只有比文本才能保证判定与画面一致。
+    // 同时把本帧时间写进模块级快照，供 redraw_card 那条无参路径兜底。
+    if (local) {
+        g_last_local = *local;
+        g_last_local_valid = true;
+    }
+    char weather_status[24];
+    weather_status_text(local, weather_status, sizeof(weather_status));
+    const bool date_changed =
+        std::strcmp(weather_status, last_weather_status) != 0;
 
     if (!time_changed && !pct_changed && !env_changed && !bt_changed &&
         !wifi_changed && !pomo_changed && !date_changed) return false;
@@ -744,7 +771,16 @@ bool update_main_menu(const struct tm *local, int battery_percent)
         redraw_card(1, s_selection == 1);
     }
     if (date_changed) {
-        last_date_key = date_key;
+        std::strncpy(last_weather_status, weather_status,
+                     sizeof(last_weather_status) - 1);
+        // 一天最多打一条：确认系统时间算出的是哪个星期，排查时最直接。
+        ESP_LOGI(TAG, "weather card: '%s' (date %04d-%02d-%02d, wday=%d, valid=%d)",
+                 weather_status,
+                 local ? local->tm_year + 1900 : 0,
+                 local ? local->tm_mon + 1 : 0,
+                 local ? local->tm_mday : 0,
+                 local ? local->tm_wday : -1,
+                 local ? 1 : 0);
         redraw_card(0, s_selection == 0);
     }
     return true;

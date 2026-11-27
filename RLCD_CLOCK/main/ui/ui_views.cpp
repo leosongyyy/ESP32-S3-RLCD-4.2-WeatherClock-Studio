@@ -35,6 +35,7 @@
 #include "ui_loop_schedule.h"
 #include "ui_main_menu.h"
 #include "ui_pomodoro.h"
+#include "ui_reading.h"
 #include "pomodoro/pomodoro_classic.h"
 #include "ui_runtime_schedule.h"
 #include "ui_setup_status.h"
@@ -71,6 +72,7 @@ enum class VisibleAuxiliaryPage {
     kSettings,
     kMainMenu,
     kPomodoro,
+    kReading,
 };
 
 static_assert(kUiInfoPageOtaFallbackPollMs > 0,
@@ -149,6 +151,10 @@ void ui_task(void *)
     int pomodoro_last_min = -1;
     int pomodoro_last_batt = -999;
     bool pomodoro_snap_valid = false;
+    // 阅读模块：状态版本 + 上次刷新的分钟/电量，只在变化时重画。
+    uint32_t reading_last_version = 0;
+    int reading_last_min = -1;
+    int reading_last_batt = -999;
     regular_app_task_mark_ready(RegularAppTaskId::kUi);
 
     for (;;) {
@@ -365,6 +371,50 @@ void ui_task(void *)
                 (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
                 continue;
             }
+            // 阅读模块：书库与正文共用一张 canvas，状态（视图/选中/页码）
+            // 由输入任务改动后 bump 版本号，这里发现版本变化就整页重画。
+            // 状态栏按分钟/电量单独局刷。
+            if (reading_shown() && !battery.low_battery_mode &&
+                !runtime_surfaces.setup_portal_active) {
+                // 与主菜单、番茄钟一样，每帧保活 BLE 手柄服务，
+                // 否则宽限期后 pad_stop() 断连，翻页键全部失效。
+                pad_service_ensure();
+                pad_service_notify_visible();
+                build_reading_ui();
+                if (reading_root() &&
+                    visible_auxiliary_page != VisibleAuxiliaryPage::kReading) {
+                    show_page(reading_root());
+                    visible_auxiliary_page = VisibleAuxiliaryPage::kReading;
+                    reading_last_version = 0;
+                    reading_last_min = -1;
+                    reading_last_batt = -999;
+                }
+                const int reading_battery =
+                    battery_snapshot_valid ? battery.percent : -1;
+                const uint32_t version = reading_state_version();
+                const bool version_changed = version != reading_last_version;
+                const bool clock_due =
+                    cached_local_valid && local.tm_min != reading_last_min;
+                const bool battery_due =
+                    reading_battery >= 0 && reading_battery != reading_last_batt;
+                if (version_changed) {
+                    reading_redraw_all(cached_local_valid ? &local : nullptr,
+                                       reading_battery);
+                    reading_last_version = version;
+                    reading_last_min = cached_local_valid ? local.tm_min : -1;
+                    reading_last_batt = reading_battery;
+                    lv_refr_now(nullptr);
+                } else if (clock_due || battery_due) {
+                    reading_refresh_status_bar(cached_local_valid ? &local : nullptr,
+                                               reading_battery);
+                    if (clock_due) reading_last_min = local.tm_min;
+                    reading_last_batt = reading_battery;
+                    lv_refr_now(nullptr);
+                }
+                Lvgl_unlock();
+                (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+                continue;
+            }
             bool info_requested = runtime_surfaces.info_requested;
             InfoPageStateSnapshot info_state = {};
             OtaRuntimeTimingSnapshot info_ota = {};
@@ -413,6 +463,12 @@ void ui_task(void *)
             // 从番茄钟退出后恢复工作页（计时数据由 classic 核心后台继续维护）。
             if (visible_auxiliary_page == VisibleAuxiliaryPage::kPomodoro &&
                 !pomodoro_shown()) {
+                visible_auxiliary_page = VisibleAuxiliaryPage::kNone;
+                restore_active_work_page_after_aux(false);
+            }
+            // 从阅读模块退出后恢复工作页。
+            if (visible_auxiliary_page == VisibleAuxiliaryPage::kReading &&
+                !reading_shown()) {
                 visible_auxiliary_page = VisibleAuxiliaryPage::kNone;
                 restore_active_work_page_after_aux(false);
             }

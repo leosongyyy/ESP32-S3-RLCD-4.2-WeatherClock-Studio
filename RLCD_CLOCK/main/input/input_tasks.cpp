@@ -21,6 +21,7 @@
 #include "ui_info_page_state.h"
 #include "ui_main_menu.h"
 #include "ui_pomodoro.h"
+#include "ui_reading.h"
 #include "ui_settings_activity_state.h"
 #include "ui_settings_feedback.h"
 #include "ui_settings_navigation.h"
@@ -77,6 +78,10 @@ constexpr int kGamepadRepeatNextMs = 220;
 // 代价：单次短按必须等这个窗口过去才能执行（不然没法区分单击/双击）。
 // 350ms 的延迟在墨水屏上基本感知不到——这一页本来就是几百毫秒一跳的节奏。
 constexpr int kBootDoubleClickMs = 350;
+// 阅读弹层里「按住 BOOT = 加/删书签」的门槛。必须明显长于双击窗口
+// （350ms），否则双击的第二下还没落下就被判成长按；又短于全局长按
+// （1200ms），因为这里按住不放等 1.2 秒太难受，800ms 已经很清楚。
+constexpr int kReadingBookmarkHoldMs = 800;
 // 按住多久算「长按 = 带上 START/SELECT」。
 // 250ms 足够躲开抖动（kButtonDebounceMs=18）又远小于退出阈值（2000ms），
 // 中间这段用户可以正常做出「按住 A 连跳」「按住 B 加速」这类 GB 常见操作。
@@ -96,6 +101,7 @@ constexpr TickType_t kGamepadUiPollTicks = pdMS_TO_TICKS(kGamepadUiPollMs);
 constexpr TickType_t kGamepadRepeatFirstTicks = pdMS_TO_TICKS(kGamepadRepeatFirstMs);
 constexpr TickType_t kGamepadRepeatNextTicks = pdMS_TO_TICKS(kGamepadRepeatNextMs);
 constexpr TickType_t kBootDoubleClickTicks = pdMS_TO_TICKS(kBootDoubleClickMs);
+constexpr TickType_t kReadingBookmarkHoldTicks = pdMS_TO_TICKS(kReadingBookmarkHoldMs);
 constexpr const char *kSettingsBusyFeedbackText = "请等待操作完成";
 TaskNotificationTarget s_button_task_target;
 
@@ -116,6 +122,9 @@ void return_to_main_menu()
 {
     if (pomodoro_shown()) {
         pomodoro_hide();   // 计时数据由 classic 核心后台继续维护
+    }
+    if (reading_shown()) {
+        reading_hide();
     }
     if (game_bind_page_active()) {
         game_bind_page_close();
@@ -148,6 +157,8 @@ bool activate_main_menu_selection(TickType_t now)
     } else if (action == MainMenuAction::kPomodoro) {
         classic_init();
         pomodoro_show();
+    } else if (action == MainMenuAction::kBookshelf) {
+        reading_show();
     } else {
         return false;  // kNone，空模块
     }
@@ -210,6 +221,10 @@ static_assert(kBootDoubleClickMs > kButtonDebounceMs &&
               "double-click window must sit between debounce and long press");
 static_assert(kBootDoubleClickTicks > 0,
               "double-click window must survive tick quantisation");
+// 阅读里长按加书签必须比双击窗口更晚触发，不然双击会被吃成长按。
+static_assert(kReadingBookmarkHoldMs > kBootDoubleClickMs &&
+                  kReadingBookmarkHoldMs <= kButtonLongPressMs,
+              "reading bookmark hold must sit after double-click window");
 
 // 运行期按键语义（只有两个物理键，靠「按住时长」把 8 个 GB 按键压出来）：
 //   BOOT 短按            = A
@@ -447,6 +462,137 @@ void poll_gamepad_in_game_list(TickType_t now)
 }
 
 // 番茄钟页手柄语义（独吞这一轮输入）：
+// 阅读模块的手柄操作：
+//   书库：方向(边沿) = 移动选中格；A = 打开这本书；B = 回主页
+//   正文：左/上 = 上一页，右/下 = 下一页；B = 回书库
+//         双击 A(350ms 内两次) = 切换全屏阅读（全屏里同样操作退出）
+//         START(边沿)  = 当前页加/删书签
+//         SELECT(边沿) = 打开目录/书签弹层
+//   弹层：上/下 = 选择条目；左/右 = 切换目录、书签页签；
+//         A = 跳到选中条目并关闭；B/SELECT = 关闭；START = 加/删书签
+//   LB+RB(边沿) = 回主页
+// 返回 true 表示本帧处理了输入（调用方据此 notify UI）。
+bool poll_gamepad_reading(TickType_t now)
+{
+    if (pad_state() != PAD_STATE_READY) return false;
+    bool acted = false;
+
+    static bool shoulder_home_was = false;
+    const bool shoulder_home = pad_shoulders() == 0x03;
+    if (shoulder_home && !shoulder_home_was) {
+        ESP_LOGI(TAG, "reading LB+RB: return to main menu");
+        return_to_main_menu();
+        shoulder_home_was = true;
+        return true;
+    }
+    shoulder_home_was = shoulder_home;
+    if (shoulder_home) return false;
+
+    // 四个方向的边沿锁存，两套视图共用（视图切换时不会残留按住状态）。
+    static bool dir_was[4] = {false, false, false, false};
+    const bool dir_now[4] = {pad_button(GB_BTN_LEFT), pad_button(GB_BTN_RIGHT),
+                             pad_button(GB_BTN_UP), pad_button(GB_BTN_DOWN)};
+
+    static bool a_was = false;
+    static bool b_was = false;
+    static bool start_was = false;
+    static bool select_was = false;
+    // 双击 A 切全屏用：记住上一次 A 按下的时刻。
+    static TickType_t a_tap_tick = 0;
+    static bool a_tap_pending = false;
+    const bool a_now = pad_button(GB_BTN_A);
+    const bool b_now = pad_button(GB_BTN_B);
+    const bool start_now = pad_button(GB_BTN_START);
+    const bool select_now = pad_button(GB_BTN_SELECT);
+
+    const bool left_edge = dir_now[0] && !dir_was[0];
+    const bool right_edge = dir_now[1] && !dir_was[1];
+    const bool up_edge = dir_now[2] && !dir_was[2];
+    const bool down_edge = dir_now[3] && !dir_was[3];
+    const bool a_edge = a_now && !a_was;
+    const bool b_edge = b_now && !b_was;
+    const bool start_edge = start_now && !start_was;
+    const bool select_edge = select_now && !select_was;
+
+    if (reading_view() == ReadingView::kShelf) {
+        if (left_edge) { reading_move_selection(-1, 0); acted = true; }
+        if (right_edge) { reading_move_selection(1, 0); acted = true; }
+        if (up_edge) { reading_move_selection(0, -1); acted = true; }
+        if (down_edge) { reading_move_selection(0, 1); acted = true; }
+        if (a_edge) {
+            reading_open_selected();
+            ESP_LOGI(TAG, "reading: open book index=%d", reading_selection());
+            acted = true;
+        }
+        if (b_edge) {
+            return_to_main_menu();
+            acted = true;
+        }
+    } else if (reading_panel_shown()) {
+        if (up_edge) { reading_panel_move(-1); acted = true; }
+        if (down_edge) { reading_panel_move(1); acted = true; }
+        if (left_edge) { reading_panel_switch_tab(-1); acted = true; }
+        if (right_edge) { reading_panel_switch_tab(1); acted = true; }
+        if (a_edge) {
+            reading_panel_activate();
+            ESP_LOGI(TAG, "reading: jump from panel");
+            acted = true;
+        }
+        if (b_edge || select_edge) {
+            reading_panel_close();
+            acted = true;
+        }
+        if (start_edge) {
+            const int r = reading_toggle_bookmark();
+            ESP_LOGI(TAG, "reading: toggle bookmark -> %d", r);
+            acted = true;
+        }
+    } else {
+        if (left_edge || up_edge) {
+            reading_turn_page(-1);
+            acted = true;
+        }
+        if (right_edge || down_edge) {
+            reading_turn_page(1);
+            acted = true;
+        }
+        if (b_edge) {
+            reading_back_to_shelf();
+            acted = true;
+        }
+        if (a_edge) {
+            if (a_tap_pending &&
+                (TickType_t)(now - a_tap_tick) <= kBootDoubleClickTicks) {
+                a_tap_pending = false;
+                reading_toggle_fullscreen();
+                ESP_LOGI(TAG, "reading: fullscreen -> %d",
+                         reading_fullscreen() ? 1 : 0);
+            } else {
+                a_tap_pending = true;
+                a_tap_tick = now;
+            }
+            acted = true;
+        }
+        if (start_edge) {
+            const int r = reading_toggle_bookmark();
+            ESP_LOGI(TAG, "reading: toggle bookmark -> %d", r);
+            acted = true;
+        }
+        if (select_edge) {
+            reading_panel_open(0);
+            ESP_LOGI(TAG, "reading: open toc panel");
+            acted = true;
+        }
+    }
+
+    for (int i = 0; i < 4; ++i) dir_was[i] = dir_now[i];
+    a_was = a_now;
+    b_was = b_now;
+    start_was = start_now;
+    select_was = select_now;
+    return acted;
+}
+
 //   A(边沿)           = 开始 / 暂停
 //   上/下(边沿+连发)  = 选 MODE（专注/短休/长休，选中即切换并重置）
 //   左/右(边沿)       = 选 MODE（同上，便于单向操作）
@@ -1177,6 +1323,103 @@ void button_task(void *)
                 return_to_main_menu();
                 acted = true;
             }
+            if (acted) notify_ui_task();
+            vTaskDelay(pdMS_TO_TICKS(kGamepadPollMs));
+            continue;
+        }
+
+        // 阅读模块：书库与正文都独吞这一轮输入。手柄见 poll_gamepad_reading，
+        // 物理键映射：BOOT 当 A、KEY 当 B。
+        //   书库：BOOT 单击 = 打开；KEY = 回主菜单
+        //   正文（弹层关着）：BOOT 单击 = 下一页、双击 = 上一页、长按 800ms = 全屏开关
+        //                    KEY  单击 = 回书库、双击 = 目录弹层
+        //   正文（弹层开着）：BOOT 单击 = 关弹层、长按 = 加/删书签；KEY 单击 = 关弹层
+        // 单击一律等松手后才执行，否则按住不放会被判成单击，双击和长按就做不出来。
+        if (reading_shown()) {
+            bool acted = poll_gamepad_reading(now);
+            static bool boot_was = false, key_was = false;
+            static TickType_t rd_boot_since = 0;    // 本次按下的时刻，0 = 没按
+            static TickType_t rd_boot_pending = 0;  // 候选单击：记按下时刻
+            static bool rd_boot_long_done = false;  // 本次按住已触发长按
+            static TickType_t rd_key_pending = 0;
+
+            const bool boot_edge = boot_pressed && !boot_was;
+
+            if (boot_edge) {
+                rd_boot_since = now;
+                rd_boot_long_done = false;
+                if (reading_view() == ReadingView::kShelf) {
+                    rd_boot_pending = 0;
+                    reading_open_selected();
+                    acted = true;
+                } else if (rd_boot_pending != 0 &&
+                           (TickType_t)(now - rd_boot_pending) <= kBootDoubleClickTicks) {
+                    // 第二击落在窗口内：算双击，把第一次排队的单击吃掉。
+                    rd_boot_pending = 0;
+                    rd_boot_long_done = true;   // 这一下不再判长按
+                    if (reading_panel_shown()) {
+                        reading_panel_close();
+                    } else {
+                        reading_turn_page(-1);
+                        ESP_LOGI(TAG, "reading BOOT double-click: prev page");
+                    }
+                    acted = true;
+                } else {
+                    rd_boot_pending = now;      // 先当候选单击，等松手再定
+                }
+            }
+
+            // 按住不放：弹层里是加/删书签，正文里是全屏开关；一次按住只触发一次。
+            if (boot_pressed && !rd_boot_long_done && rd_boot_pending != 0 &&
+                (TickType_t)(now - rd_boot_since) >= kReadingBookmarkHoldTicks) {
+                rd_boot_long_done = true;
+                rd_boot_pending = 0;
+                if (reading_panel_shown()) {
+                    reading_panel_bookmark();
+                    ESP_LOGI(TAG, "reading BOOT long-press: toggle bookmark");
+                } else {
+                    reading_toggle_fullscreen();
+                    ESP_LOGI(TAG, "reading BOOT long-press: fullscreen=%d",
+                             reading_fullscreen() ? 1 : 0);
+                }
+                acted = true;
+            }
+
+            // 已松手、双击窗口也过了还没等到第二击 → 这一下是单击。
+            if (rd_boot_pending != 0 && !boot_pressed &&
+                (TickType_t)(now - rd_boot_pending) > kBootDoubleClickTicks) {
+                rd_boot_pending = 0;
+                if (reading_panel_shown()) reading_panel_close();
+                else reading_turn_page(1);
+                acted = true;
+            }
+
+            if (key_pressed && !key_was) {
+                if (reading_view() == ReadingView::kShelf) {
+                    rd_key_pending = 0;
+                    return_to_main_menu();
+                    acted = true;
+                } else if (rd_key_pending != 0 &&
+                           (TickType_t)(now - rd_key_pending) <= kBootDoubleClickTicks) {
+                    rd_key_pending = 0;
+                    if (reading_panel_shown()) reading_panel_close();
+                    else reading_panel_open(0);
+                    ESP_LOGI(TAG, "reading KEY double-click: toggle toc panel");
+                    acted = true;
+                } else {
+                    rd_key_pending = now;
+                }
+            }
+            if (rd_key_pending != 0 &&
+                (TickType_t)(now - rd_key_pending) > kBootDoubleClickTicks) {
+                rd_key_pending = 0;
+                if (reading_panel_shown()) reading_panel_close();
+                else reading_back_to_shelf();
+                acted = true;
+            }
+
+            boot_was = boot_pressed;
+            key_was = key_pressed;
             if (acted) notify_ui_task();
             vTaskDelay(pdMS_TO_TICKS(kGamepadPollMs));
             continue;

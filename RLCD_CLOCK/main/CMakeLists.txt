@@ -61,6 +61,9 @@ idf_component_register(
         "ui/ui_game_bind.cpp"
         "ui/ui_main_menu.cpp"
         "ui/ui_pomodoro.cpp"
+        "ui/ui_reading.cpp"
+        "book/book_store.cpp"
+        "book/book_font.cpp"
         "ui/ui_calendar.cpp"
         "ui/ui_calendar_layout.cpp"
         "ui/ui_weather_board.cpp"
@@ -218,6 +221,7 @@ idf_component_register(
         "storage"
         "assets"
         "game"
+        "book"
     REQUIRES
         app_bsp
         port_bsp

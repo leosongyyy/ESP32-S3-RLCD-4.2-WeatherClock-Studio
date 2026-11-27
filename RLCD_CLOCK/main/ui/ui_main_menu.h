@@ -11,6 +11,7 @@ enum class MainMenuAction {
     kGameBoy,       // 游戏工作页
     kSettings,      // 设置辅助页
     kPomodoro,      // 番茄钟页
+    kBookshelf,     // 阅读模块（书库页）
 };
 
 void build_main_menu_ui();
