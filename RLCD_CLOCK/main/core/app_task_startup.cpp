@@ -30,7 +30,8 @@ constexpr uint32_t kNetworkSyncTaskStack = 20480;
 constexpr uint32_t kOtaTaskStack = 16384;
 constexpr uint32_t kHousekeepingTaskStack = 5120;
 constexpr uint32_t kUiTaskStack = 8192;
-constexpr uint32_t kButtonTaskStack = 3072;
+// 天气时钟切子页会在按键任务栈上同步整页重绘；留足余量避免栈溢出复位。
+constexpr uint32_t kButtonTaskStack = 5120;
 constexpr uint32_t kAlarmTaskStack = 4096;
 constexpr uint32_t kPomodoroTaskStack = 4096;
 constexpr uint32_t kRegularTaskCreateRetryDelayMs = 100;

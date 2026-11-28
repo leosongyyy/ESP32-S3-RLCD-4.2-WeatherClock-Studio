@@ -969,10 +969,18 @@ void month_day(const char *date, char *out, size_t size)
     std::snprintf(out, size, "%02d/%02d", m, d);
 }
 
+// 天气快照的两个大结构（days[6]+hourly[24] 约 1.5KB）放文件级静态缓冲。
+// 切子页时本函数是在 button_task 栈上同步调用的，button_task 只有 3KB，
+// 若把它们声明为局部变量会直接触发栈溢出重启。UI 侧单线程串行调用，静态缓冲安全。
+WeatherData s_w_snapshot = {};
+WeatherForecastData s_f_snapshot = {};
+
 void refresh_weather_page_data()
 {
-    WeatherData w = {};
-    WeatherForecastData f = {};
+    WeatherData &w = s_w_snapshot;
+    WeatherForecastData &f = s_f_snapshot;
+    w = WeatherData{};
+    f = WeatherForecastData{};
     s_weather = {};
     std::snprintf(s_weather.city, sizeof(s_weather.city), "成都");
     city_english(s_weather.city, s_weather.city_en, sizeof(s_weather.city_en));
@@ -983,21 +991,22 @@ void refresh_weather_page_data()
     std::snprintf(s_weather.updated, sizeof(s_weather.updated), "--:--");
     if (!get_weather_full_snapshot(&w, nullptr, &f, nullptr) || !w.temp[0]) return;
     s_weather.ready = true;
-    std::snprintf(s_weather.city, sizeof(s_weather.city), "%s", w.city[0] ? w.city : "成都");
+    std::snprintf(s_weather.city, sizeof(s_weather.city), "%.31s",
+                  w.city[0] ? w.city : "成都");
     city_english(s_weather.city, s_weather.city_en, sizeof(s_weather.city_en));
-    std::snprintf(s_weather.temp, sizeof(s_weather.temp), "%s", w.temp);
-    std::snprintf(s_weather.apparent, sizeof(s_weather.apparent), "%s°",
+    std::snprintf(s_weather.temp, sizeof(s_weather.temp), "%.7s", w.temp);
+    std::snprintf(s_weather.apparent, sizeof(s_weather.apparent), "%.13s°",
                   w.apparent[0] ? w.apparent : "--");
-    std::snprintf(s_weather.condition_cn, sizeof(s_weather.condition_cn), "%s", w.text);
+    std::snprintf(s_weather.condition_cn, sizeof(s_weather.condition_cn), "%.31s", w.text);
     // 极长天气文案（如「雷阵雨伴冰雹」）截到 3 个汉字，避免撞上左侧大图标。
     if (std::strlen(s_weather.condition_cn) > 12) s_weather.condition_cn[9] = '\0';
     condition_label(w.text, s_weather.condition_en, sizeof(s_weather.condition_en));
 
     if (f.ready && f.count > 0) {
         const WeatherForecastDay &today = f.days[0];
-        std::snprintf(s_weather.high, sizeof(s_weather.high), "%s°",
+        std::snprintf(s_weather.high, sizeof(s_weather.high), "%.13s°",
                       today.temp_max[0] ? today.temp_max : "--");
-        std::snprintf(s_weather.low, sizeof(s_weather.low), "%s°",
+        std::snprintf(s_weather.low, sizeof(s_weather.low), "%.13s°",
                       today.temp_min[0] ? today.temp_min : "--");
         wind_label(today.wind_dir, today.wind_scale, s_weather.wind, sizeof(s_weather.wind));
         const char *uv = w.uv_index[0] ? w.uv_index : today.uv_index;
@@ -1014,8 +1023,8 @@ void refresh_weather_page_data()
         const int idx = f.hourly_count > 0 ? (i * f.hourly_count) / 6 : -1;
         if (idx >= 0 && f.hourly[idx].valid) {
             const WeatherHourlyPoint &p = f.hourly[idx];
-            std::snprintf(out.hour, sizeof(out.hour), "%s", p.hour);
-            std::snprintf(out.temp, sizeof(out.temp), "%s°", p.temp);
+            std::snprintf(out.hour, sizeof(out.hour), "%.7s", p.hour);
+            std::snprintf(out.temp, sizeof(out.temp), "%.5s°", p.temp);
             const int hh = std::atoi(p.hour);
             out.icon = small_icon_from_code(p.icon, hh < 6 || hh >= 18);
         } else {
@@ -1038,7 +1047,7 @@ void refresh_weather_page_data()
             out.bar = std::atoi(d.temp_max);
             if (out.bar < 0) out.bar = 0;
             if (out.bar > 34) out.bar = 34;
-            std::snprintf(out.temps, sizeof(out.temps), "%s/%s°",
+            std::snprintf(out.temps, sizeof(out.temps), "%.10s/%.10s°",
                           d.temp_min[0] ? d.temp_min : "--",
                           d.temp_max[0] ? d.temp_max : "--");
         } else {
