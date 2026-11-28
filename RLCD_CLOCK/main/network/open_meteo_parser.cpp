@@ -58,6 +58,18 @@ bool sun_time(const cJSON *array,int i,const char *date,char *out,size_t size,in
     if((s[0]-'0')*10+s[1]-'0'>23)return false;
     std::snprintf(out,size,"%s",s);return true;
 }
+// 从 Open-Meteo 的 ISO 时间 "2026-11-28T14:00" 提取本地小时 "14"。
+bool hourly_hour(const cJSON *array,int i,char *out,size_t size)
+{
+    const cJSON *value=cJSON_GetArrayItem(array,i);
+    if(!cJSON_IsString(value) || std::strlen(value->valuestring)!=16)return false;
+    const char *s=value->valuestring;
+    if(s[4]!='-'||s[7]!='-'||s[10]!='T'||s[13]!=':')return false;
+    if(s[11]<'0'||s[11]>'9'||s[12]<'0'||s[12]>'9')return false;
+    const int hour=(s[11]-'0')*10+(s[12]-'0');
+    if(hour>23)return false;
+    std::snprintf(out,size,"%c%c",s[11],s[12]);return true;
+}
 }
 
 bool open_meteo_weather_code(int code,bool daylight,char *text,size_t text_size,char *icon,size_t icon_size)
@@ -104,10 +116,13 @@ bool parse_open_meteo_weather(const char *json,WeatherData *weather,WeatherForec
        !number(current,"is_day",0,1,&daylight) || std::floor(daylight)!=daylight ||
        !number(current,"wind_speed_10m",0,150,&wind) ||
        !number(current,"wind_direction_10m",0,360,&direction))return false;
-    const char *keys[]={"time","temperature_2m_max","temperature_2m_min","weather_code","sunrise","sunset"};
-    const cJSON *arrays[6]={};
+    // 新字段按可选处理，缺字段时整份天气仍可用（兼容旧缓存/降级来源）。
+    double apparent=temp;
+    (void)number(current,"apparent_temperature",-100,70,&apparent);
+    const char *keys[]={"time","temperature_2m_max","temperature_2m_min","weather_code","uv_index_max","sunrise","sunset"};
+    const cJSON *arrays[7]={};
     int count=0;
-    for(int j=0;j<6;++j){
+    for(int j=0;j<7;++j){
         arrays[j]=cJSON_GetObjectItemCaseSensitive(daily,keys[j]);
         if(!cJSON_IsArray(arrays[j]))return false;
         const int n=cJSON_GetArraySize(arrays[j]);
@@ -128,13 +143,20 @@ bool parse_open_meteo_weather(const char *json,WeatherData *weather,WeatherForec
         std::snprintf(out.date,sizeof(out.date),"%s",date->valuestring);
         std::snprintf(out.temp_max,sizeof(out.temp_max),"%.0f",high);
         std::snprintf(out.temp_min,sizeof(out.temp_min),"%.0f",low);
-        if(!sun_time(arrays[4],i,out.date,out.sunrise,sizeof(out.sunrise),&out.sunrise_day_offset)||
-           !sun_time(arrays[5],i,out.date,out.sunset,sizeof(out.sunset),&out.sunset_day_offset)||
+        double uv=0;
+        if(array_number(arrays[4],i,0,30,&uv))
+            std::snprintf(out.uv_index,sizeof(out.uv_index),"%.0f",uv);
+        if(!sun_time(arrays[5],i,out.date,out.sunrise,sizeof(out.sunrise),&out.sunrise_day_offset)||
+           !sun_time(arrays[6],i,out.date,out.sunset,sizeof(out.sunset),&out.sunset_day_offset)||
            !open_meteo_weather_code(static_cast<int>(c),true,out.text,sizeof(out.text),out.icon,sizeof(out.icon)))return false;
         out.valid=true;
     }
     std::snprintf(weather->temp,sizeof(weather->temp),"%.0f",temp);
     std::snprintf(weather->humidity,sizeof(weather->humidity),"%.0f",humidity);
+    std::snprintf(weather->apparent,sizeof(weather->apparent),"%.0f",apparent);
+    // 当日 UV 取 daily[0]，UI 的 UV 条用它。
+    if(forecast->days[0].uv_index[0])
+        std::snprintf(weather->uv_index,sizeof(weather->uv_index),"%s",forecast->days[0].uv_index);
     if(!open_meteo_weather_code(static_cast<int>(code),daylight!=0,weather->text,sizeof(weather->text),weather->icon,sizeof(weather->icon)))return false;
     auto &today=forecast->days[0];
     std::snprintf(today.humidity,sizeof(today.humidity),"%.0f",humidity);
@@ -143,6 +165,37 @@ bool parse_open_meteo_weather(const char *json,WeatherData *weather,WeatherForec
     const double thresholds[]={0.3,1.6,3.4,5.5,8.0,10.8,13.9,17.2,20.8,24.5,28.5,32.7};
     int scale=0;while(scale<12 && wind>=thresholds[scale])++scale;
     std::snprintf(today.wind_scale,sizeof(today.wind_scale),"%d",scale);
+    // 逐时数组可选：请求带 forecast_hours=24，但缺字段不否定整份天气。
+    forecast->hourly_count=0;
+    const cJSON *hourly=cJSON_GetObjectItemCaseSensitive(root.get(),"hourly");
+    if(hourly){
+        const cJSON *htime=cJSON_GetObjectItemCaseSensitive(hourly,"time");
+        const cJSON *htemp=cJSON_GetObjectItemCaseSensitive(hourly,"temperature_2m");
+        const cJSON *hcode=cJSON_GetObjectItemCaseSensitive(hourly,"weather_code");
+        const cJSON *hday=cJSON_GetObjectItemCaseSensitive(hourly,"is_day");
+        if(cJSON_IsArray(htime)&&cJSON_IsArray(htemp)&&cJSON_IsArray(hcode)&&cJSON_IsArray(hday)){
+            const int hn=cJSON_GetArraySize(htime);
+            if(cJSON_GetArraySize(htemp)==hn&&cJSON_GetArraySize(hcode)==hn&&
+               cJSON_GetArraySize(hday)==hn&&hn>=1){
+                const int limit=hn<kWeatherHourlyCount?hn:kWeatherHourlyCount;
+                for(int i=0;i<limit;++i){
+                    auto &point=forecast->hourly[i];
+                    double t,c,d;
+                    if(!hourly_hour(htime,i,point.hour,sizeof(point.hour))||
+                       !array_number(htemp,i,-100,70,&t)||
+                       !array_number(hcode,i,0,999,&c)||std::floor(c)!=c||
+                       !array_number(hday,i,0,1,&d)||std::floor(d)!=d)continue;
+                    std::snprintf(point.temp,sizeof(point.temp),"%.0f",t);
+                    char text[32]={};
+                    if(!open_meteo_weather_code(static_cast<int>(c),d!=0,
+                                                text,sizeof(text),
+                                                point.icon,sizeof(point.icon)))continue;
+                    point.valid=true;
+                    ++forecast->hourly_count;
+                }
+            }
+        }
+    }
     forecast->ready=true;
     return true;
 }

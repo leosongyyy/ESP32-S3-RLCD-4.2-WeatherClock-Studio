@@ -25,6 +25,7 @@
 #include "ui_settings_activity_state.h"
 #include "ui_settings_feedback.h"
 #include "ui_settings_navigation.h"
+#include "ui_time_calendar.h"
 #include "ui_runtime_schedule.h"
 #include "ui_task_notify.h"
 #include "ui_work_page_catalog.h"
@@ -774,6 +775,12 @@ bool poll_gamepad_global_nav(TickType_t now)
             // 短按：设置页移选单；其它页等同切一页
             if (in_settings) {
                 handle_settings_key_short();
+            } else if (active_work_page_load() == kWorkPageWeatherClock &&
+                       !setup_portal_active_load() && !battery_low_mode_load()) {
+                // 天气时钟短按左右 = 在「时间与日历 / 天气时钟」两个子页之间切换；
+                // 长按左右仍然切工作页，保留原来的全局导航能力。
+                time_calendar_toggle_page();
+                ESP_LOGI(TAG, "weather clock subpage: %d", time_calendar_page());
             } else {
                 const int target = lr > 0 ? next_enabled_work_page(active_work_page_load())
                                           : prev_enabled_work_page(active_work_page_load());

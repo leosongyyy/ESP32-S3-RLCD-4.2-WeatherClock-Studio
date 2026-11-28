@@ -36,17 +36,22 @@ uint8_t read_saved_page_mask(nvs_handle_t nvs)
     if (nvs_get_u8(nvs, kPageMaskV6Key, &page_mask) == ESP_OK) {
         g_page_mask_source = 1;
         g_page_mask_raw = page_mask;
-        return normalize_work_page_enabled_mask(page_mask);
+        // v6 掩码是旧 8 位布局，需要把游戏页（旧 6）搬到新 1 位。
+        return normalize_work_page_enabled_mask(
+            remap_legacy_page_mask(page_mask));
     }
     if (nvs_get_u8(nvs, kPageMaskV5Key, &page_mask) == ESP_OK) {
         g_page_mask_source = 2;
         g_page_mask_raw = page_mask;
-        return normalize_work_page_enabled_mask(page_mask | (1U << kWorkPageAggregateClock));
+        return normalize_work_page_enabled_mask(
+            remap_legacy_page_mask(static_cast<uint8_t>(
+                page_mask | (1U << 7))));
     }
     if (nvs_get_u8(nvs, kPageMaskV4Key, &page_mask) == ESP_OK) {
         g_page_mask_source = 3;
         g_page_mask_raw = page_mask;
-        return normalize_work_page_enabled_mask(migrate_v4_page_mask(page_mask) | (1U << kWorkPageAggregateClock));
+        return normalize_work_page_enabled_mask(
+            migrate_v4_page_mask(page_mask));
     }
     g_page_mask_source = 4;
     g_page_mask_raw = page_mask;
@@ -63,20 +68,9 @@ bool read_saved_page_order(nvs_handle_t nvs, uint8_t *page_order, size_t page_or
         stored_len == page_order_size) {
         return true;
     }
-    stored_len = kWorkPageAggregateClock;
-    if (nvs_get_blob(nvs, kPageOrderV5Key, page_order, &stored_len) == ESP_OK &&
-        stored_len == kWorkPageAggregateClock) {
-        page_order[kWorkPageAggregateClock] = kWorkPageAggregateClock;
-        return true;
-    }
-    uint8_t legacy_order[kLegacyV4WorkPageCount] = {};
-    stored_len = sizeof(legacy_order);
-    return nvs_get_blob(nvs, kPageOrderV4Key, legacy_order, &stored_len) == ESP_OK &&
-           stored_len == sizeof(legacy_order) &&
-           migrate_v4_page_order(legacy_order,
-                                 sizeof(legacy_order),
-                                 page_order,
-                                 page_order_size);
+    // 旧版顺序 blob 长度是 7/8 字节，与现行 2 页布局不匹配，直接忽略，
+    // 交由上层 normalize_work_page_order() 回退到默认顺序。
+    return false;
 }
 
 esp_err_t write_work_page_order_nvs(nvs_handle_t nvs,

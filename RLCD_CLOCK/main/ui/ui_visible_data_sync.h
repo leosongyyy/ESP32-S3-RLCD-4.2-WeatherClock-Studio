@@ -10,14 +10,8 @@ struct WeatherCacheStatusSnapshot;
 struct DailySayingCacheSnapshot;
 
 struct ActiveWorkPageState {
-    bool history = false;
-    bool gallery = false;
-    bool calendar = false;
-    bool weather_board = false;
-    bool flip_clock = false;
     bool game = false;
     bool weather_clock = false;
-    bool aggregate_clock = false;
     bool uses_weather_data = false;
     bool uses_extended_weather_data = false;
     bool uses_daily_saying = false;

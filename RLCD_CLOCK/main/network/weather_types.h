@@ -7,6 +7,7 @@
 inline constexpr int kMaxWeatherAlerts = 6;
 inline constexpr int kWeatherAlertTitleLen = 64;
 inline constexpr int kWeatherForecastDays = 6;
+inline constexpr int kWeatherHourlyCount = 24;
 inline constexpr int kWeatherAdviceLen = 96;
 
 struct WeatherData {
@@ -17,8 +18,18 @@ struct WeatherData {
     char icon[8] = {};
     char temp[8] = {};
     char humidity[8] = {};
+    char apparent[8] = {};   // 体感温度（Open-Meteo apparent_temperature）
+    char uv_index[8] = {};   // 当日 UV 指数（Open-Meteo daily uv_index_max）
     char lat[16] = {};
     char lon[16] = {};
+};
+
+// 逐小时预报点，Open-Meteo 免密钥接口提供；和风天气源无此数据，保持空。
+struct WeatherHourlyPoint {
+    char hour[8] = {};   // 本地小时 "00".."23"
+    char temp[8] = {};   // 该小时温度，含负号
+    char icon[8] = {};   // QWeather 风格图标码，供 UI 选小图标
+    bool valid = false;
 };
 
 struct WeatherAlertData {
@@ -37,6 +48,7 @@ struct WeatherForecastDay {
     char temp_max[8] = {};
     char temp_min[8] = {};
     char humidity[8] = {};
+    char uv_index[8] = {};
     char wind_dir[16] = {};
     char wind_scale[8] = {};
     char sunrise[8] = {};
@@ -49,6 +61,8 @@ struct WeatherForecastData {
     bool ready = false;
     int count = 0;
     WeatherForecastDay days[kWeatherForecastDays] = {};
+    int hourly_count = 0;
+    WeatherHourlyPoint hourly[kWeatherHourlyCount] = {};
     char advice[kWeatherAdviceLen] = {};
     time_t updated_at = 0;
 };

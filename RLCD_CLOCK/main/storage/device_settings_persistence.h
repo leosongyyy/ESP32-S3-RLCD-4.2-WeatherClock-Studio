@@ -1,4 +1,4 @@
-// 声明声音、工作页和图库周期设置的持久化入口。
+// 声明声音和工作页设置的持久化入口。
 #pragma once
 
 #include <stddef.h>
@@ -11,7 +11,6 @@ bool set_chime_setting(const ChimeRuntimeSnapshot &settings);
 bool set_work_page_enabled_mask_setting(uint8_t page_mask);
 bool set_work_page_order_setting(const uint8_t *page_order,
                                  size_t page_order_size);
-bool set_gallery_rotation_period_setting(uint8_t period);
 
 // 把「游戏页」一次性补进用户的页面启用配置。
 //

@@ -17,7 +17,6 @@
 #include "weather_provider.h"
 #include "network_weather_city_storage.h"
 #include "offline_mode_state_internal.h"
-#include "ui_gallery_rotation_state_internal.h"
 #include "ui_work_page_catalog_internal.h"
 
 #include <esp_attr.h>
@@ -39,18 +38,10 @@ using network_config_keys::kWifiBackupSsidKey;
 using network_config_keys::kWifiPassKey;
 using network_config_keys::kWifiPreferredSlotKey;
 using network_config_keys::kWifiSsidKey;
-using network_config_keys::kGalleryRotationKey;
 
 namespace {
-constexpr uint8_t work_page_mask_bit(int page)
-{
-    return static_cast<uint8_t>(1U << page);
-}
-
 constexpr uint8_t kPageMaskV4KnownBits = network_page_storage::kLegacyV4KnownPageMask;
 constexpr uint8_t kPageMaskV5KnownBits = network_page_storage::kCurrentKnownPageMask;
-constexpr uint8_t kWeatherBoardPageMask = work_page_mask_bit(kWorkPageWeatherBoard);
-constexpr uint8_t kFlipClockPageMask = work_page_mask_bit(kWorkPageFlipClock);
 constexpr const char *kNvsActionLoadingConfig = "loading config";
 constexpr const char *kOfflinePageMaskPersistFailedLog =
     "failed to persist offline-compatible page settings";
@@ -74,7 +65,6 @@ struct LoadedSavedConfig {
     uint8_t sound;
     uint8_t page_mask;
     uint8_t offline;
-    uint8_t gallery_rotation;
     uint8_t preferred_wifi_slot;
     uint8_t weather_provider;
     uint8_t page_order[kWorkPageCount];
@@ -84,14 +74,10 @@ struct LoadedSavedConfig {
 EXT_RAM_BSS_ATTR LoadedSavedConfig s_loaded_saved_config_workspace;
 
 static_assert(kWorkPageCount <= 8, "work page enabled mask is stored as uint8_t");
-static_assert((kPageMaskV4KnownBits & work_page_mask_bit(kWorkPageGameBoy)) == 0,
-              "page mask v4 must not include the game page");
+static_assert((kPageMaskV4KnownBits & network_page_storage::kLegacyV5KnownPageMask) == kPageMaskV4KnownBits,
+              "v4 known pages must be a subset of the legacy v5 mask");
 static_assert(kPageMaskV5KnownBits == static_cast<uint8_t>((1U << kWorkPageCount) - 1U),
               "page mask v5 must cover every current work page");
-static_assert((kPageMaskV5KnownBits & kWeatherBoardPageMask) == kWeatherBoardPageMask,
-              "weather board page must be covered by the current page mask");
-static_assert((kPageMaskV5KnownBits & kFlipClockPageMask) == kFlipClockPageMask,
-              "flip clock page must be covered by the current page mask");
 static_assert(std::is_trivially_default_constructible<LoadedSavedConfig>::value,
               "saved config workspace must not require static construction");
 static_assert(std::is_trivially_destructible<LoadedSavedConfig>::value,
@@ -182,7 +168,6 @@ void initialize_loaded_saved_config(LoadedSavedConfig *loaded)
     loaded->host_err = ESP_FAIL;
     loaded->volume = chime_settings::kDefaultVolumePercent;
     loaded->page_mask = kPageMaskV5KnownBits;
-    loaded->gallery_rotation = kDefaultGalleryRotationPeriod;
     loaded->preferred_wifi_slot =
         static_cast<uint8_t>(WifiCredentialSlot::kSlotA);
 }
@@ -223,8 +208,6 @@ void read_saved_config(nvs_handle_t nvs, LoadedSavedConfig *loaded)
     loaded->page_mask = read_saved_page_mask(nvs);
     loaded->offline = read_nvs_u8_or_default(nvs, kOfflineModeKey, 0);
     loaded->weather_provider = read_nvs_u8_or_default(nvs, network_config_keys::kWeatherProviderKey, 0);
-    loaded->gallery_rotation = read_nvs_u8_or_default(
-        nvs, kGalleryRotationKey, kDefaultGalleryRotationPeriod);
     loaded->preferred_wifi_slot = read_nvs_u8_or_default(
         nvs,
         kWifiPreferredSlotKey,
@@ -279,7 +262,6 @@ bool apply_loaded_config(const LoadedSavedConfig &loaded)
     };
     chime_runtime_snapshot_store(chime);
     offline_mode_enabled_store(nvs_u8_to_bool(loaded.offline));
-    gallery_rotation_period_store(loaded.gallery_rotation);
     return apply_loaded_page_config(loaded.page_mask, loaded.page_order, loaded.have_page_order);
 }
 } // namespace

@@ -1,6 +1,5 @@
 // 管理页面根对象、可见性、工作页顺序和低电量显示状态。
 #include "ui_page_state.h"
-#include "ui_aggregate_clock.h"
 
 #include "active_work_page_state_internal.h"
 #include "app_display_config.h"
@@ -9,14 +8,13 @@
 #include "ui_clock.h"
 #include "ui_clock_header_objects.h"
 #include "ui_clock_surface_objects.h"
-#include "ui_flip_clock.h"
 #include "ui_game.h"
 #include "ui_progress.h"
 #include "ui_setup_status.h"
 #include "ui_status_refresh_policy.h"
+#include "ui_time_calendar.h"
 #include "ui_widgets.h"
 #include "ui_work_page_catalog.h"
-#include "ui_work_pages.h"
 #include "weather_state.h"
 #include "wifi_portal_state.h"
 #include "work_page_ids.h"
@@ -56,26 +54,8 @@ lv_obj_t *build_work_page_root(int page)
     case kWorkPageWeatherClock:
         build_clock_ui();
         break;
-    case kWorkPageHistory:
-        build_history_page();
-        break;
-    case kWorkPageGallery:
-        build_gallery_page();
-        break;
-    case kWorkPageCalendar:
-        build_calendar_page();
-        break;
-    case kWorkPageWeatherBoard:
-        build_weather_board_page();
-        break;
-    case kWorkPageFlipClock:
-        build_flip_clock_page();
-        break;
     case kWorkPageGameBoy:
         build_game_page();
-        break;
-    case kWorkPageAggregateClock:
-        build_aggregate_clock_page();
         break;
     default:
         return work_page_root(kFallbackWorkPage);
@@ -256,6 +236,8 @@ void apply_clock_mode_visibility(bool setup_active, bool low_battery_mode)
     set_obj_visible(surface.low_battery_icon_canvas, low);
     set_lower_panel_visible(!setup_active && !low);
     set_setup_status_panel_visible(setup_active && !low);
+    // 「时间与日历」整屏覆盖层：配网和低电量模式都要让位。
+    set_time_calendar_visible(!setup_active && !low);
     set_obj_visible(surface.panel_separator_a, !setup_active || low);
     set_obj_visible(surface.panel_separator_b, !setup_active || low);
     if (low || setup_active) {

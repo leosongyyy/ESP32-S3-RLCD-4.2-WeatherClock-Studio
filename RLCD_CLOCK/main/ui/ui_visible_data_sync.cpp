@@ -30,7 +30,6 @@ constexpr const char *kWeatherTempFormat = "%s℃";
 constexpr const char *kWeatherHumidityFormat = "%s%%";
 
 #define UI_WEATHER_VISIBLE_SYNC_REQUEST_FORMAT "weather clock visible with %s weather, requesting sync"
-#define UI_GALLERY_SAYING_SYNC_REQUEST_LOG "gallery visible with missing/stale daily saying, requesting sync"
 
 static_assert(kWeatherCityTextSize > 1,
               "weather city status text buffer must fit text and NUL");
@@ -75,15 +74,6 @@ bool weather_cache_stale(time_t now_value,
                          const WeatherCacheStatusSnapshot &cache_status)
 {
     return ui_weather_cache_stale(now_value, cache_status.last_sync_time);
-}
-
-bool saying_cache_stale(time_t now_value,
-                        const DailySayingCacheSnapshot *cache_status)
-{
-    return ui_daily_saying_cache_stale(now_value,
-                                       cache_status && cache_status->available,
-                                       cache_status ? cache_status->last_sync_time
-                                                    : 0);
 }
 
 void cancel_visible_sync_request(VisibleSyncRetryState<TickType_t> &retry,
@@ -132,13 +122,7 @@ ActiveWorkPageState active_work_page_state_for_mode(int active_page,
                                                     bool normal_mode)
 {
     ActiveWorkPageState state = {};
-    state.history = normal_mode && active_page == kWorkPageHistory;
-    state.gallery = normal_mode && active_page == kWorkPageGallery;
-    state.calendar = normal_mode && active_page == kWorkPageCalendar;
-    state.weather_board = normal_mode && active_page == kWorkPageWeatherBoard;
-    state.flip_clock = normal_mode && active_page == kWorkPageFlipClock;
     state.game = normal_mode && active_page == kWorkPageGameBoy;
-    state.aggregate_clock = normal_mode && active_page == kWorkPageAggregateClock;
     // Low-battery and setup overlays historically retain the weather clock as
     // their active base page; keep that distinction outside normal-page gates.
     state.weather_clock = active_page == kWorkPageWeatherClock;
@@ -165,14 +149,9 @@ void update_visible_weather_sync(const ActiveWorkPageState &state,
         return;
     }
     const bool weather_ready = weather_ready_state_load();
-    bool details_missing = state.uses_extended_weather_data &&
-                           cache_status &&
-                           !(state.aggregate_clock ? cache_status->forecast_data_ready
-                                                   : cache_status->extended_data_ready);
     bool cache_fresh = weather_ready &&
                        cache_status &&
-                       !weather_cache_stale(now, *cache_status) &&
-                       !details_missing;
+                       !weather_cache_stale(now, *cache_status);
 #ifdef WEATHER_CLOCK_WIFI_AB_TEST
     // One requested round per slot; keep existing visibility/safety gates.
     const int ab_slot = weather_wifi_ab_slot(esp_timer_get_time());
@@ -232,8 +211,7 @@ void update_visible_weather_sync(const ActiveWorkPageState &state,
                                    tick_now,
                                    sync_in_flight,
                                    ota_active,
-                                   !weather_ready ? "missing"
-                                                  : (details_missing ? "incomplete" : "stale"));
+                                   !weather_ready ? "missing" : "stale");
 }
 
 void update_visible_daily_saying_sync(const ActiveWorkPageState &state,
@@ -242,61 +220,14 @@ void update_visible_daily_saying_sync(const ActiveWorkPageState &state,
                                       const DailySayingCacheSnapshot *cache_status,
                                       VisibleSyncRetryState<TickType_t> &retry)
 {
+    // 一言页（图片时钟）已下线，当前没有任何工作页消费一言数据。
+    (void)now;
+    (void)cache_status;
     if (!state.uses_daily_saying) {
         cancel_visible_sync_request(retry,
                                     tick_now,
                                     kVisibleSayingSyncBit,
                                     false);
-        return;
-    }
-    const bool cache_fresh = !saying_cache_stale(now, cache_status);
-    if (cache_fresh && retry.idle()) {
-        return;
-    }
-    if (cache_fresh) {
-        cancel_visible_sync_request(retry,
-                                    tick_now,
-                                    kVisibleSayingSyncBit,
-                                    true);
-        return;
-    }
-    if (!network_wifi_credentials_configured() ||
-        offline_mode_enabled_load()) {
-        cancel_visible_sync_request(retry,
-                                    tick_now,
-                                    kVisibleSayingSyncBit,
-                                    false);
-        return;
-    }
-
-    const bool ota_active = ota_flow_active();
-    if (ota_active) {
-        cancel_visible_sync_request(retry,
-                                    tick_now,
-                                    kVisibleSayingSyncBit,
-                                    false);
-        return;
-    }
-    EventBits_t sync_bits = app_event_group_get_bits();
-    bool sync_in_flight =
-        (sync_bits & (kManualSayingSyncBit |
-                      kVisibleSayingSyncBit |
-                      kProvisioningSyncBit)) != 0;
-    if (!network_visible_auto_sync_allowed(esp_timer_get_time())) {
-        cancel_visible_sync_request(retry,
-                                    tick_now,
-                                    kVisibleSayingSyncBit,
-                                    false);
-        return;
-    }
-    if (retry.request_if_due(tick_now,
-                             sync_in_flight,
-                             ota_active,
-                             pdMS_TO_TICKS(kWeatherClockAutoRetryMs),
-                             kWeatherClockAutoSyncMaxAttempts,
-                             pdMS_TO_TICKS(kWeatherClockAutoBackoffMs))) {
-        ESP_LOGI(TAG, "%s", UI_GALLERY_SAYING_SYNC_REQUEST_LOG);
-        app_event_group_set_bits(kVisibleSayingSyncBit);
     }
 }
 

@@ -31,10 +31,9 @@ constexpr int clamp_selection_to_count(int selected, int count)
 static_assert(kSettingsPrimaryExitBlockMs > 0, "settings primary exit block duration must be positive");
 static_assert(kSettingsOrderExitFeedbackMs > 0, "settings order exit feedback duration must be positive");
 static_assert(kSettingsOrderExitSavedFeedback[0] != '\0', "settings order saved feedback must not be empty");
-static_assert(clamp_selection_to_count(kWorkPageCalendar, kWorkPageCount) == kWorkPageCalendar &&
-                  clamp_selection_to_count(kWorkPageHistory, kWorkPageCount) == kWorkPageHistory &&
+static_assert(clamp_selection_to_count(kWorkPageWeatherClock, kWorkPageCount) == kWorkPageWeatherClock &&
                   clamp_selection_to_count(kWorkPageGameBoy, kWorkPageCount) == kWorkPageGameBoy,
-              "high work page indices must remain selectable in page toggle mode");
+              "all work page indices must remain selectable in page toggle mode");
 static_assert(kSettingsPrimaryCount <= 256 && kSettingsSecondaryMaxCount <= 256 &&
                   kWorkPageCount <= 256,
               "settings navigation selections must fit in the atomic snapshot fields");

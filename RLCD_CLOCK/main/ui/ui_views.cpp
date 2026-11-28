@@ -746,8 +746,6 @@ void ui_task(void *)
                 sensor_status_due = true;
                 battery_due = true;
                 battery_blink_due = true;
-                invalidate_history_draw_cache();
-                invalidate_flip_clock_time_sensor_draw_cache();
                 invalidate_clock_date_draw_cache();
                 refresh_now = true;
             }

@@ -18,7 +18,9 @@
 #include <cstring>
 
 namespace {
-constexpr size_t kResponseBytes=8192;
+// 逐时 24 点（time/temperature_2m/weather_code）会让响应增大约 1KB，
+// 缓冲上调到 16KB，PSRAM 分配，不影响内部 RAM。
+constexpr size_t kResponseBytes=16384;
 struct Workspace { WeatherData weather; WeatherForecastData forecast; WeatherAirData air; };
 EXT_RAM_BSS_ATTR Workspace workspace;
 struct CityCache { char query[32]; WeatherData location; int64_t expires_us; };
@@ -59,9 +61,9 @@ bool resolve_location(WeatherData *out)
 bool fetch_forecast(WeatherData *weather,WeatherForecastData *forecast)
 {
     if(!coordinates(weather->lat,weather->lon))return false;
-    char url[640];
+    char url[768];
     const int n=std::snprintf(url,sizeof(url),
-        "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&timezone=Asia%%2FShanghai&wind_speed_unit=ms&forecast_days=6&current=temperature_2m,relative_humidity_2m,weather_code,is_day,wind_speed_10m,wind_direction_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,sunrise,sunset",
+        "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&timezone=Asia%%2FShanghai&wind_speed_unit=ms&forecast_days=6&forecast_hours=24&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,is_day,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,weather_code,uv_index_max,sunrise,sunset",
         weather->lat,weather->lon);
     if(n<0 || static_cast<size_t>(n)>=sizeof(url))return false;
     ScopedHeapBuffer<char> response(kResponseBytes,HeapBufferInit::kUninitialized,HeapBufferStorage::kPsramPreferred);

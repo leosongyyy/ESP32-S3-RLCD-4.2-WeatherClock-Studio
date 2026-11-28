@@ -9,7 +9,6 @@
 #include "audio_services.h"
 #include "chime_runtime_state.h"
 #include "chime_settings.h"
-#include "custom_assets.h"
 #include "manual_weather_city_state.h"
 #include "network_config.h"
 #include "device_settings_persistence.h"
@@ -21,7 +20,6 @@
 #include "pomodoro_services.h"
 #include "setup_portal_control.h"
 #include "ui_info_page_state_internal.h"
-#include "ui_gallery_rotation_state.h"
 #include "ui_settings_activity_state.h"
 #include "ui_settings_confirmation_state_internal.h"
 #include "ui_settings_feedback.h"
@@ -63,8 +61,6 @@ constexpr const char *kPageOrderInstructionFeedback = "BOOT交换并保存";
 constexpr const char *kPageSwitchInstructionFeedback = "页面开关：BOOT切换";
 constexpr const char *kLastWorkPageFeedback = "至少保留一个页面";
 constexpr const char *kPageOrderBlockedFeedback = "页面顺序不可用";
-constexpr const char *kGalleryRotationBuiltinFeedback = "默认图片固定24h";
-constexpr const char *kGalleryRotationFeedbackFormat = "图片切换 %s";
 constexpr const char *kAlarmDisabledFeedback = "闹钟已关闭";
 constexpr const char *kAlarmSetByVoiceUnavailableFeedback = "闹钟暂不可用";
 constexpr const char *kWorkPageFeedbackFormat = "%s%s";
@@ -356,22 +352,6 @@ void handle_display_settings_action(
             return;
         }
         set_settings_feedback(kAlarmDisabledFeedback, kSettingsFeedbackDefaultMs);
-        return;
-    }
-    if (selected == kDisplaySettingsGalleryRotationItem) {
-        if (custom_assets_gallery_count() <= 0) {
-            set_settings_feedback(kGalleryRotationBuiltinFeedback,
-                                  kSettingsFeedbackInstructionMs);
-            return;
-        }
-        const uint8_t next =
-            next_gallery_rotation_period(gallery_rotation_period_load());
-        if (!set_gallery_rotation_period_setting(next)) {
-            set_settings_feedback(kSettingsSaveFailedFeedback, kSettingsFeedbackDefaultMs);
-            return;
-        }
-        set_formatted_settings_feedback(kGalleryRotationFeedbackFormat,
-                                        gallery_rotation_period_label(next));
         return;
     }
     set_settings_feedback(kSettingsSaveFailedFeedback, kSettingsFeedbackDefaultMs);

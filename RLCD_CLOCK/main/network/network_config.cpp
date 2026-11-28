@@ -28,7 +28,6 @@
 #include "qweather_api_host.h"
 #include "ui_work_page_catalog_internal.h"
 #include "weather_city_text.h"
-#include "ui_gallery_rotation_state_internal.h"
 
 #include <esp_log.h>
 
@@ -186,7 +185,6 @@ static void reset_saved_config_runtime_state()
     invalidate_weather_configuration();
     clear_wifi_station_ip();
     offline_mode_enabled_store(false);
-    gallery_rotation_period_store(kDefaultGalleryRotationPeriod);
     chime_runtime_snapshot_store({
         false,
         false,

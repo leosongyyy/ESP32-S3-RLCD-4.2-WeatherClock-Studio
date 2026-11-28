@@ -15,6 +15,8 @@ namespace network_weather_city_storage {
 namespace {
 constexpr const char *kInvalidWeatherCityLoadLog =
     "ignore invalid weather city loaded from NVS";
+// 没有手动城市、也没有上位机资源城市时，固件默认显示四川成都。
+constexpr const char *kDefaultWeatherCity = "成都";
 
 static_assert(kManualWeatherCityLen == kCustomAssetWeatherCityMaxLen + 1,
               "weather city buffers must cover the custom asset city limit");
@@ -122,6 +124,9 @@ bool load_preferred_city(nvs_handle_t nvs, char *out, size_t out_len)
             strlen(asset_city) < out_len) {
             memcpy(out, asset_city, strlen(asset_city) + 1);
         }
+    }
+    if (out[0] == '\0' && strlen(kDefaultWeatherCity) < out_len) {
+        memcpy(out, kDefaultWeatherCity, strlen(kDefaultWeatherCity) + 1);
     }
     return out[0] != '\0';
 }

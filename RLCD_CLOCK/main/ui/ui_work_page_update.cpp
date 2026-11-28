@@ -1,18 +1,18 @@
 // 组合刷新当前工作页的时间、正文、全天进度和天气预警。
 #include "ui_work_page_update.h"
-#include "ui_aggregate_clock.h"
+
+#include "battery_runtime_state.h"
+#include "ui_time_calendar.h"
 
 #include "sensor_time.h"
 #include "ui_clock_alert_state.h"
 #include "ui_clock_runtime.h"
 #include "ui_clock_time.h"
 #include "ui_draw_cache.h"
-#include "ui_flip_clock.h"
 #include "ui_game.h"
 #include "ui_page_state.h"
 #include "ui_progress.h"
 #include "ui_widgets.h"
-#include "ui_work_pages.h"
 #include "ui_work_status.h"
 #include "weather_state.h"
 #include "work_page_ids.h"
@@ -25,24 +25,7 @@ bool update_visible_work_page_body(const struct tm &local,
                                    const ActiveWorkPageState &state)
 {
     bool changed = false;
-    if (state.aggregate_clock) {
-        changed |= update_aggregate_clock_page(local);
-    }
-    if (state.history) {
-        changed |= update_history_page(local);
-    }
-    if (state.gallery) {
-        changed |= update_gallery_page(local);
-    }
-    if (state.calendar) {
-        changed |= update_calendar_page(local);
-    }
-    if (state.weather_board) {
-        changed |= update_weather_board_page(local);
-    }
-    if (state.flip_clock) {
-        changed |= update_flip_clock_page(local, time_snapshot);
-    }
+    (void)time_snapshot;
     if (state.game) {
         changed |= update_game_page(local);
     }
@@ -134,6 +117,9 @@ bool update_active_work_page_content(const struct tm &local,
                                   setup_portal_active);
         changed |= update_visible_work_page_body(local, time_snapshot, state);
         changed |= update_work_page_day_progress(active_page, time_snapshot);
+        if (state.weather_clock && !low_battery_mode && !setup_portal_active) {
+            time_calendar_tick(local, battery_percent_load());
+        }
         changed |= update_weather_alert_state(local,
                                               state,
                                               status_due,
@@ -149,7 +135,6 @@ bool update_active_work_page_content(const struct tm &local,
     changed |= update_active_work_page_invalid_time_labels(
         active_page,
         low_battery_mode || setup_portal_active);
-    if (state.aggregate_clock) changed |= update_aggregate_clock_page(local);
     invalidate_clock_date_draw_cache();
     update_alert_pill(false,
                       0,

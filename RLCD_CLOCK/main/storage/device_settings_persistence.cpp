@@ -1,4 +1,4 @@
-// 负责声音、工作页、小智自动返回和图库周期设置的条件写入与 NVS 提交。
+// 负责声音和工作页设置的条件写入与 NVS 提交。
 #include "device_settings_persistence.h"
 
 #include "app_metadata.h"
@@ -7,7 +7,6 @@
 #include "network_config_keys.h"
 #include "network_config_nvs.h"
 #include "network_page_storage.h"
-#include "ui_gallery_rotation_state_internal.h"
 #include "ui_work_page_catalog_internal.h"
 #include "ui_work_page_order_policy.h"
 
@@ -18,15 +17,12 @@ using network_config_nvs::ScopedNvsHandle;
 using network_config_nvs::write_changed_nvs_u8;
 using network_page_storage::kPageMaskV6Key;
 using network_page_storage::write_work_page_order_nvs;
-using network_config_keys::kGalleryRotationKey;
 
 namespace {
 constexpr const char *kNvsActionSavingHourlyReminder = "saving hourly reminder";
 constexpr const char *kNvsActionSavingPageSettings = "saving page settings";
 constexpr const char *kNvsActionSavingPageOrder = "saving page order";
-constexpr const char *kNvsActionSavingGalleryRotation = "saving gallery rotation";
 constexpr const char *kNvsFailureContextPageSettings = "page settings";
-constexpr const char *kNvsFailureContextGalleryRotation = "gallery rotation";
 #define NVS_SAVE_HOURLY_REMINDER_FAILED_FORMAT "nvs save hourly reminder failed: %s"
 #define NVS_SAVE_PAGE_ORDER_FAILED_FORMAT "nvs save page order failed: %s"
 #define NVS_SAVE_U8_SETTING_FAILED_FORMAT "nvs save %s failed: %s"
@@ -188,18 +184,5 @@ bool set_work_page_order_setting(const uint8_t *page_order,
         return false;
     }
     work_page_order_replace(page_order, page_order_size);
-    return true;
-}
-
-bool set_gallery_rotation_period_setting(uint8_t period)
-{
-    const uint8_t normalized = normalize_gallery_rotation_period(period);
-    if (!save_changed_u8_setting(kNvsActionSavingGalleryRotation,
-                                 kNvsFailureContextGalleryRotation,
-                                 kGalleryRotationKey,
-                                 normalized)) {
-        return false;
-    }
-    gallery_rotation_period_store(normalized);
     return true;
 }

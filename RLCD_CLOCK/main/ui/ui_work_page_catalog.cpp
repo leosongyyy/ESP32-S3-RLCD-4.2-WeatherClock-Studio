@@ -15,16 +15,10 @@ namespace {
 constexpr int kFirstWorkPage = kWorkPageWeatherClock;
 constexpr int kFallbackWorkPage = kWorkPageWeatherClock;
 constexpr uint8_t kWorkPageTraitRequiresNetwork = 1U << 0;
-constexpr uint8_t kWorkPageTraitLowRefreshIdle = 1U << 1;
 constexpr uint8_t kWorkPageTraitWeatherData = 1U << 2;
-constexpr uint8_t kWorkPageTraitDailySaying = 1U << 3;
-constexpr uint8_t kWorkPageTraitExtendedWeatherData = 1U << 4;
 constexpr uint8_t kKnownWorkPageTraits =
     kWorkPageTraitRequiresNetwork |
-    kWorkPageTraitLowRefreshIdle |
-    kWorkPageTraitWeatherData |
-    kWorkPageTraitDailySaying |
-    kWorkPageTraitExtendedWeatherData;
+    kWorkPageTraitWeatherData;
 
 struct WorkPageDescriptor {
     uint8_t page;
@@ -36,42 +30,17 @@ constexpr WorkPageDescriptor kWorkPageDescriptors[kWorkPageCount] = {
     {kWorkPageWeatherClock,
      "天气时钟",
      kWorkPageTraitRequiresNetwork | kWorkPageTraitWeatherData},
-    {kWorkPageGallery,
-     "图片时钟",
-     kWorkPageTraitRequiresNetwork | kWorkPageTraitLowRefreshIdle |
-         kWorkPageTraitDailySaying},
-    {kWorkPageWeatherBoard,
-     "天气看板",
-     kWorkPageTraitRequiresNetwork | kWorkPageTraitLowRefreshIdle |
-         kWorkPageTraitWeatherData | kWorkPageTraitExtendedWeatherData},
-    {kWorkPageFlipClock, "温湿时钟", 0},
-    {kWorkPageCalendar, "日历", kWorkPageTraitLowRefreshIdle},
-    {kWorkPageHistory, "温湿历史", kWorkPageTraitLowRefreshIdle},
     {kWorkPageGameBoy, "游戏", 0},
-    {kWorkPageAggregateClock, "聚合时钟", kWorkPageTraitRequiresNetwork |
-         kWorkPageTraitWeatherData | kWorkPageTraitExtendedWeatherData},
 };
 
 constexpr uint8_t kDefaultWorkPageOrder[kWorkPageCount] = {
     kWorkPageWeatherClock,
-    kWorkPageGallery,
-    kWorkPageWeatherBoard,
-    kWorkPageFlipClock,
-    kWorkPageCalendar,
-    kWorkPageHistory,
     kWorkPageGameBoy,
-    kWorkPageAggregateClock,
 };
 StaticTaskMutex s_work_page_order_mutex;
 uint8_t s_work_page_order[kWorkPageCount] = {
     kWorkPageWeatherClock,
-    kWorkPageGallery,
-    kWorkPageWeatherBoard,
-    kWorkPageFlipClock,
-    kWorkPageCalendar,
-    kWorkPageHistory,
     kWorkPageGameBoy,
-    kWorkPageAggregateClock,
 };
 constexpr const char *kUnknownWorkPageName = "未知页面";
 
@@ -96,14 +65,8 @@ constexpr uint8_t work_page_mask_for_trait(uint8_t trait)
 
 constexpr uint8_t kNetworkWorkPageMask =
     work_page_mask_for_trait(kWorkPageTraitRequiresNetwork);
-constexpr uint8_t kLowRefreshIdleWorkPageMask =
-    work_page_mask_for_trait(kWorkPageTraitLowRefreshIdle);
 constexpr uint8_t kWeatherDataWorkPageMask =
     work_page_mask_for_trait(kWorkPageTraitWeatherData);
-constexpr uint8_t kDailySayingWorkPageMask =
-    work_page_mask_for_trait(kWorkPageTraitDailySaying);
-constexpr uint8_t kExtendedWeatherDataWorkPageMask =
-    work_page_mask_for_trait(kWorkPageTraitExtendedWeatherData);
 constexpr uint8_t kLocalWorkPageMask = static_cast<uint8_t>(~kNetworkWorkPageMask) & kAllWorkPageMask;
 
 constexpr bool work_page_descriptors_are_indexed_by_id()
@@ -148,19 +111,13 @@ constexpr bool work_page_descriptor_names_are_nonempty()
 
 constexpr bool work_page_descriptor_traits_are_valid()
 {
-    constexpr uint8_t kNetworkDataTraits =
-        kWorkPageTraitWeatherData | kWorkPageTraitDailySaying |
-        kWorkPageTraitExtendedWeatherData;
+    constexpr uint8_t kNetworkDataTraits = kWorkPageTraitWeatherData;
     for (const WorkPageDescriptor &descriptor : kWorkPageDescriptors) {
         if ((descriptor.traits & ~kKnownWorkPageTraits) != 0) {
             return false;
         }
         if ((descriptor.traits & kNetworkDataTraits) != 0 &&
             (descriptor.traits & kWorkPageTraitRequiresNetwork) == 0) {
-            return false;
-        }
-        if ((descriptor.traits & kWorkPageTraitExtendedWeatherData) != 0 &&
-            (descriptor.traits & kWorkPageTraitWeatherData) == 0) {
             return false;
         }
     }
@@ -202,16 +159,8 @@ static_assert(kWorkPageCount <= static_cast<int>(sizeof(uint8_t) * 8),
 static_assert(kLocalWorkPageMask != 0, "offline mode requires at least one local work page");
 static_assert((kLocalWorkPageMask & kNetworkWorkPageMask) == 0,
               "local and network work page masks must not overlap");
-static_assert(kLowRefreshIdleWorkPageMask != 0,
-              "low-refresh idle page mask must not be empty");
-static_assert((kLowRefreshIdleWorkPageMask & ~kAllWorkPageMask) == 0,
-              "low-refresh idle page mask must only contain work pages");
 static_assert((kWeatherDataWorkPageMask & ~kNetworkWorkPageMask) == 0,
               "weather-data pages must require network access");
-static_assert((kDailySayingWorkPageMask & ~kNetworkWorkPageMask) == 0,
-              "daily-saying pages must require network access");
-static_assert((kExtendedWeatherDataWorkPageMask & ~kWeatherDataWorkPageMask) == 0,
-              "extended-weather pages must consume basic weather data");
 static_assert(array_count(kDefaultWorkPageOrder) == kWorkPageCount,
               "default work page order must cover every work page");
 static_assert(array_count(kWorkPageDescriptors) == kDisplaySettingsPageItemCount,
@@ -260,17 +209,18 @@ bool work_page_requires_network(int page)
 
 bool work_page_uses_low_refresh_idle(int page)
 {
-    return work_page_order_policy::is_work_page(page) &&
-           work_page_has_trait(page, kWorkPageTraitLowRefreshIdle);
+    // 低刷新空闲页（日历/温湿历史等）已全部下线，仅保留接口避免改动调度方。
+    (void)page;
+    return false;
 }
 
 WorkPageDataRequirements work_page_data_requirements(int page)
 {
     return {
         work_page_has_trait(page, kWorkPageTraitWeatherData),
-        work_page_has_trait(page, kWorkPageTraitExtendedWeatherData),
-        work_page_has_trait(page, kWorkPageTraitDailySaying),
-        page == kWorkPageWeatherBoard,
+        false,
+        false,
+        false,
     };
 }
 
@@ -279,22 +229,21 @@ WorkPageDataRequirements enabled_work_page_data_requirements(uint8_t page_mask)
     page_mask = static_cast<uint8_t>(page_mask & kAllWorkPageMask);
     return {
         (page_mask & kWeatherDataWorkPageMask) != 0,
-        (page_mask & kExtendedWeatherDataWorkPageMask) != 0,
-        (page_mask & kDailySayingWorkPageMask) != 0,
-        (page_mask & work_page_mask(kWorkPageWeatherBoard)) != 0,
+        false,
+        false,
+        false,
     };
 }
 
 uint8_t normalize_work_page_enabled_mask(uint8_t page_mask)
 {
     page_mask &= kAllWorkPageMask;
-    if (page_mask == 0) {
-        return kAllWorkPageMask;
-    }
-    if (!work_page_order_policy::mask_has_valid_home(page_mask)) {
-        page_mask |= work_page_mask(kWorkPageWeatherClock);
-    }
-    return page_mask;
+    // 天气时钟是主页，也是配网/低电量模式的强制回退页（kFallbackWorkPage），
+    // 必须永远启用。旧版 NVS 掩码可能缺失这一位（实测设备 raw_mask=0x02），
+    // 这里无条件置位，否则 ensure_active_work_page_enabled 会把「天气时钟」
+    // 入口偷换成第一个启用页（游戏）。
+    return static_cast<uint8_t>(page_mask |
+                                work_page_mask(kWorkPageWeatherClock));
 }
 
 uint8_t work_page_mask_for_offline_mode(uint8_t page_mask)
@@ -312,7 +261,7 @@ uint8_t work_page_mask_for_offline_mode(uint8_t page_mask)
             }
         }
     }
-    return work_page_mask(kWorkPageFlipClock);
+    return work_page_mask(kWorkPageWeatherClock);
 }
 
 const char *work_page_name(int page)

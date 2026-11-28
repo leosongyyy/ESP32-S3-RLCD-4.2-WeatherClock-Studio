@@ -12,7 +12,6 @@
 #include "ui_clock_sensor_objects.h"
 #include "ui_canvas_primitives.h"
 #include "ui_draw_cache.h"
-#include "ui_flip_clock.h"
 #include "ui_fonts.h"
 #include "ui_icons.h"
 #include "ui_page_state.h"
@@ -405,9 +404,6 @@ static bool update_work_page_sensor_summary(lv_obj_t *label)
 
 bool update_non_clock_work_page_sensor_status(int page)
 {
-    if (page == kWorkPageFlipClock) {
-        return update_flip_clock_sensor_status();
-    }
     return update_work_page_sensor_summary(get_work_page_status_labels(page).summary);
 }
 
