@@ -396,7 +396,7 @@ void draw_title_bar()
     text12(6, TITLE_Y + 5, "MAIN MENU", 2);
     int x = 6 + text_width12("MAIN MENU", 2) + 8;
     text12(x, TITLE_Y + 5, "主菜单", 2);
-    const char *ver = "YUAN'S SYS V1.4";
+    const char *ver = "YUAN'S SYS V1.5";
     text12(W - 6 - text_width12(ver), TITLE_Y + 8, ver);
 }
 
