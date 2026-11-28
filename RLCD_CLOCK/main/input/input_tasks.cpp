@@ -77,10 +77,11 @@ constexpr int kGamepadRepeatNextMs = 220;
 // 操作，和 ROM 列表页"BOOT 短按换 ROM"的手感一致，只是快按两下。
 //
 // 代价：单次短按必须等这个窗口过去才能执行（不然没法区分单击/双击）。
-// 350ms 的延迟在墨水屏上基本感知不到——这一页本来就是几百毫秒一跳的节奏。
-constexpr int kBootDoubleClickMs = 350;
+// 300ms 是单击响应与双击手速的折中，比原来的 350ms 快一档，
+// 仍远大于 18ms 去抖，正常连按两下的间隔（约 150-250ms）仍在窗口内。
+constexpr int kBootDoubleClickMs = 300;
 // 阅读弹层里「按住 BOOT = 加/删书签」的门槛。必须明显长于双击窗口
-// （350ms），否则双击的第二下还没落下就被判成长按；又短于全局长按
+// （300ms），否则双击的第二下还没落下就被判成长按；又短于全局长按
 // （1200ms），因为这里按住不放等 1.2 秒太难受，800ms 已经很清楚。
 constexpr int kReadingBookmarkHoldMs = 800;
 // 按住多久算「长按 = 带上 START/SELECT」。

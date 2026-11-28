@@ -40,7 +40,6 @@ idf_component_register(
         "ui/ui_settings_confirmation_state.cpp"
         "ui/ui_settings_navigation_state.cpp"
         "ui/ui_settings_navigation.cpp"
-        "ui/ui_settings_ota_panel.cpp"
         "ui/ui_settings_actions.cpp"
         "ui/ui_game.cpp"
         "ui/ui_game_bind.cpp"
@@ -140,12 +139,6 @@ idf_component_register(
         "network/network_sync_runtime.cpp"
         "network/network_sync_wait.cpp"
         "network/network_sync_schedule.cpp"
-        "ota/ota_download_http.cpp"
-        "ota/ota_manifest_client.cpp"
-        "ota/ota_manifest_parser.cpp"
-        "ota/ota_manifest_workspace.cpp"
-        "ota/ota_network_session.cpp"
-        "ota/ota_runtime_guards.cpp"
         "ota/ota_runtime_state.cpp"
         "ota/ota_services.cpp"
         "sensors/power_services.cpp"
@@ -230,25 +223,4 @@ idf_component_register(
         tcp_transport)
 
 string(TIMESTAMP WEATHER_CLOCK_BUILD_DATE "%Y-%m-%d")
-option(WEATHER_CLOCK_WIFI_AB_TEST "Temporary 8-hour weather Wi-Fi A/B test" OFF)
-set(WEATHER_CLOCK_WIFI_AB_SLOT_MINUTES "20" CACHE STRING
-    "Weather Wi-Fi A/B slot duration in minutes")
-option(WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_TEST
-    "Temporary 12-hour QWeather first-request timeout A/B test" OFF)
-set(WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_SLOT_MINUTES "20" CACHE STRING
-    "QWeather timeout A/B slot duration in minutes")
-if(WEATHER_CLOCK_WIFI_AB_TEST AND WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_TEST)
-    message(FATAL_ERROR
-        "Weather Wi-Fi and QWeather timeout A/B tests cannot run together")
-endif()
-if(WEATHER_CLOCK_WIFI_AB_TEST)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        WEATHER_CLOCK_WIFI_AB_TEST=1
-        WEATHER_CLOCK_WIFI_AB_SLOT_MINUTES=${WEATHER_CLOCK_WIFI_AB_SLOT_MINUTES})
-endif()
-if(WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_TEST)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_TEST=1
-        WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_SLOT_MINUTES=${WEATHER_CLOCK_QWEATHER_TIMEOUT_AB_SLOT_MINUTES})
-endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE WEATHER_CLOCK_BUILD_DATE="${WEATHER_CLOCK_BUILD_DATE}")

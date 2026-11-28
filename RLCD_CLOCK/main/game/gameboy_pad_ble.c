@@ -2336,8 +2336,11 @@ static bool pad_connect_to(const ble_addr_t *addr)
     struct ble_gap_conn_params cp = { 0 };
     cp.scan_itvl = 0x0010;
     cp.scan_window = 0x0010;
-    cp.itvl_min = 24;      // 30ms，必须是 6..3200
-    cp.itvl_max = 40;      // 50ms
+    // 连接间隔缩短到 15-30ms（单位 1.25ms），手柄按键到设备的空口延迟
+    // 从原来的 30-50ms 降一档。这是 realtime 手柄连接的常用区间，
+    // 对端手柄若不接受请求会协商回自己的值，不会导致连接失败。
+    cp.itvl_min = 12;      // 15ms，必须是 6..3200
+    cp.itvl_max = 24;      // 30ms
     cp.latency = 0;        // 必须 < 500
     cp.supervision_timeout = 0x01F4;   // 5s
     cp.min_ce_len = 0;

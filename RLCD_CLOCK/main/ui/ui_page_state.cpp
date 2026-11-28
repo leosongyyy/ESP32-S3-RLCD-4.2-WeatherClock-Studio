@@ -160,9 +160,9 @@ void show_page(lv_obj_t *page)
     for (lv_obj_t *root : s_auxiliary_page_roots) {
         set_page_visible(root, page == root);
     }
-    if (page) {
-        lv_obj_invalidate(page);
-    }
+    // 不再额外 lv_obj_invalidate(page)：LVGL 的 lv_obj_add_flag/clear_flag
+    // 在 HIDDEN 变化时就已对该对象标脏（见 lv_obj.c），重复整页标脏只会
+    // 把脏区撑到全屏、触发慢速全刷。显示/隐藏本身的标脏已经足够。
 }
 
 lv_obj_t *active_work_page_root()

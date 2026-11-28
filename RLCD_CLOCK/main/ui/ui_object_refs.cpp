@@ -9,7 +9,6 @@
 #include "ui_draw_cache.h"
 #include "ui_page_state.h"
 #include "ui_setup_status.h"
-#include "ui_settings_ota_panel.h"
 #include "ui_time_calendar.h"
 
 namespace {
@@ -57,5 +56,4 @@ void clear_info_object_refs()
     clear_auxiliary_page_root_refs();
     clear_aux_page_object_refs();
     clear_settings_page_object_refs();
-    clear_settings_ota_panel_object_refs();
 }
