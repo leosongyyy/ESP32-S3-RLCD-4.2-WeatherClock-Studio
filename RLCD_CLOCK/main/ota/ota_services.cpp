@@ -214,7 +214,7 @@ static void enter_ota_reboot_quiet_window()
     vTaskDelay(pdMS_TO_TICKS(kOtaPreRestartDisplayQuietMs));
 }
 
-static bool set_ota_event_bit(EventBits_t bit, const char *name)
+[[maybe_unused]] static bool set_ota_event_bit(EventBits_t bit, const char *name)
 {
     if (!app_event_group_ready()) {
         ESP_LOGW(TAG, OTA_REQUEST_EVENT_GROUP_UNAVAILABLE_FORMAT, ota_request_name_or_fallback(name));
@@ -227,11 +227,7 @@ static bool set_ota_event_bit(EventBits_t bit, const char *name)
 
 static void keep_ota_settings_panel_visible()
 {
-    TickType_t now = xTaskGetTickCount();
-    settings_page_request();
-    enter_settings_system_item_navigation(kSystemSettingsOtaItem);
-    settings_activity_record(now);
-    info_page_hold_until_store(0);
+    // OTA 已移除，不再跳转设置页的更新项。
 }
 
 static void hold_ota_info_page(uint32_t hold_ms = kOtaFailureHoldMs)
@@ -262,30 +258,7 @@ void ota_reset_status_if_idle()
 
 void ota_handle_info_key()
 {
-    ota_reset_status_if_idle();
-    if (offline_mode_enabled_load()) {
-        keep_ota_settings_panel_visible();
-        ota_set_failed_status(kOtaStatusOfflineMode, kOtaOfflineHoldMs);
-        return;
-    }
-    int ota_state = ota_runtime_state_load();
-    if (ota_state == kOtaChecking || ota_state == kOtaUpdating) {
-        return;
-    }
-    keep_ota_settings_panel_visible();
-    if (ota_state == kOtaAvailable) {
-        if (!set_ota_event_bit(kOtaInstallBit, "install")) {
-            return;
-        }
-        ota_set_download_status(kOtaStatusInstallingUpdate, 0, -1);
-        info_page_hold_until_store(0);
-        return;
-    }
-    if (!set_ota_event_bit(kOtaCheckBit, "check")) {
-        return;
-    }
-    ota_set_status(kOtaChecking, kOtaStatusCheckingUpdate);
-    info_page_hold_until_store(0);
+    // OTA 已从本固件移除，保留空入口避免旧调用点编译失败。
 }
 
 void ota_mark_running_app_valid()
@@ -608,7 +581,7 @@ static OtaInstallAttemptResult download_and_apply_ota(
     return OtaInstallAttemptResult::kSucceeded;
 }
 
-static void ota_set_network_start_failure_status(
+[[maybe_unused]] static void ota_set_network_start_failure_status(
     OtaNetworkSessionStartResult result)
 {
     switch (result) {
@@ -634,7 +607,7 @@ static void ota_set_network_start_failure_status(
     }
 }
 
-static void handle_ota_check_request()
+[[maybe_unused]] static void handle_ota_check_request()
 {
     OtaManifestWorkspaceGuard manifest_workspace;
     OtaManifest &manifest = manifest_workspace.primary();
@@ -672,7 +645,7 @@ static void handle_ota_check_request()
     ota_network_session_finish(OtaWifiFinishPolicy::kReleaseAwakeLock);
 }
 
-static void handle_ota_install_request()
+[[maybe_unused]] static void handle_ota_install_request()
 {
     OtaManifestWorkspaceGuard manifest_workspace;
     OtaManifest &manifest = manifest_workspace.primary();
@@ -717,36 +690,8 @@ static void handle_ota_install_request()
 
 void ota_task(void *)
 {
-    if (!app_event_group_ready()) {
-        ESP_LOGW(TAG, "%s", kOtaTaskEventGroupUnavailableLog);
-        vTaskDelete(nullptr);
-        return;
-    }
+    // OTA 已从本固件移除。仍占一个常驻任务位并立即上报 ready，
+    // 保持 create_regular_app_tasks 的 kAllRegularAppTaskBits 轮询与开机健康检查不变。
     regular_app_task_mark_ready(RegularAppTaskId::kOta);
-    for (;;) {
-        runtime_health_record_current_task_stack(RegularAppTaskId::kOta);
-        EventBits_t bits = app_event_group_wait_bits(kOtaCheckBit | kOtaInstallBit,
-                                                     pdTRUE,
-                                                     pdFALSE,
-                                                     portMAX_DELAY);
-        bool install = (bits & kOtaInstallBit) != 0;
-        bool check = (bits & kOtaCheckBit) != 0;
-        if (!install && !check) {
-            continue;
-        }
-
-        const OtaNetworkSessionStartResult network_result =
-            ota_network_session_start(kOtaWifiConnectTimeoutMs);
-        if (network_result != OtaNetworkSessionStartResult::kReady) {
-            ota_set_network_start_failure_status(network_result);
-            hold_ota_info_page();
-            continue;
-        }
-
-        if (install) {
-            handle_ota_install_request();
-        } else {
-            handle_ota_check_request();
-        }
-    }
+    vTaskDelete(nullptr);
 }

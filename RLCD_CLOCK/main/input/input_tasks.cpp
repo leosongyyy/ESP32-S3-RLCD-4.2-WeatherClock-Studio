@@ -1546,9 +1546,16 @@ void button_task(void *)
                        !battery_low_mode_load()) {
                 TickType_t held = now - boot_pressed_since;
                 if (button_press_is_short(held)) {
-                    int next_page = next_enabled_work_page(active_work_page_load());
-                    active_work_page_store(next_page);
-                    ESP_LOGI(TAG, BUTTON_SWITCH_WORK_PAGE_LOG_FORMAT, next_page + 1);
+                    if (active_work_page_load() == kWorkPageWeatherClock) {
+                        // 天气时钟只在此页两个子页间来回切，不切到其它工作页。
+                        time_calendar_toggle_page();
+                        ESP_LOGI(TAG, "weather clock BOOT: subpage=%d",
+                                 time_calendar_page());
+                    } else {
+                        int next_page = next_enabled_work_page(active_work_page_load());
+                        active_work_page_store(next_page);
+                        ESP_LOGI(TAG, BUTTON_SWITCH_WORK_PAGE_LOG_FORMAT, next_page + 1);
+                    }
                     notify_ui_task();
                 }
             }
@@ -1606,6 +1613,16 @@ void button_task(void *)
                     // 的话墨水屏会停在旧档位上。
                     notify_ui_task();
                 }
+            }
+            if (key_pressed_since != 0 && !key_press_stopped_alert &&
+                !key_long_handled && !settings_page_requested() &&
+                active_work_page_load() == kWorkPageWeatherClock &&
+                !setup_portal_active_load() && !battery_low_mode_load() &&
+                button_press_is_short(now - key_pressed_since)) {
+                // 天气时钟：KEY 短按回主菜单（BOOT 短按只切两个子页）。
+                return_to_main_menu();
+                ESP_LOGI(TAG, "weather clock KEY: back to main menu");
+                notify_ui_task();
             }
             if (key_pressed_since != 0 &&
                 !key_press_stopped_alert &&

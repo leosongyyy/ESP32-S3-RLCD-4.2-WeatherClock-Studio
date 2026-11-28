@@ -32,10 +32,8 @@ inline constexpr int kSystemSettingsOfflineItem = 0;
 inline constexpr int kSystemSettingsNetworkDiagItem = 1;
 inline constexpr int kSystemSettingsFactoryResetItem = 2;
 inline constexpr int kSystemSettingsInfoItem = 3;
-inline constexpr int kSystemSettingsOtaItem = 4;
 inline constexpr int kSystemSettingsGridItemCount = 4;
-inline constexpr int kSystemSettingsSecondaryCount =
-    kSystemSettingsOtaItem + 1;
+inline constexpr int kSystemSettingsSecondaryCount = 4;
 
 enum SettingsSyncOp {
     kSettingsSyncNone = 0,
@@ -61,5 +59,5 @@ static_assert(kDisplaySettingsSecondaryCount ==
               "display settings count must include the alarm switch");
 static_assert(kDisplaySettingsGridItemCount == kDisplaySettingsSecondaryCount,
               "all display settings items use the compact grid");
-static_assert(kSystemSettingsGridItemCount < kSystemSettingsSecondaryCount,
-              "system grid items must leave the OTA item in its long row");
+static_assert(kSystemSettingsGridItemCount == kSystemSettingsSecondaryCount,
+              "system settings no longer have a secondary OTA row");

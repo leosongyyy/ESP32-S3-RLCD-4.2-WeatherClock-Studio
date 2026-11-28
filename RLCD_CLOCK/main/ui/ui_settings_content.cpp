@@ -37,7 +37,6 @@ constexpr const char *kSettingsNetworkDiagText = "网络检测";
 constexpr const char *kSettingsFactoryResetConfirmText = "确认恢复";
 constexpr const char *kSettingsFactoryResetText = "恢复出厂设置";
 constexpr const char *kSettingsSystemInfoText = "关于本机";
-constexpr const char *kSettingsCheckUpdateText = "检查更新";
 static_assert(kSettingsSecondaryTextSize > 1,
               "settings secondary text buffer must fit text and NUL");
 } // namespace
@@ -147,8 +146,5 @@ void populate_settings_secondary_items(
         set_secondary_text(secondary_items,
                            kSystemSettingsInfoItem,
                            kSettingsSystemInfoText);
-        set_secondary_text(secondary_items,
-                           kSystemSettingsOtaItem,
-                           kSettingsCheckUpdateText);
     }
 }

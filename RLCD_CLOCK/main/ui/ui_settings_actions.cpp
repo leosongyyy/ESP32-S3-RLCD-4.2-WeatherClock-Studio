@@ -16,7 +16,6 @@
 #include "network_diagnostics_state.h"
 #include "network_runtime_events.h"
 #include "offline_mode_state.h"
-#include "ota_services.h"
 #include "pomodoro_services.h"
 #include "setup_portal_control.h"
 #include "ui_info_page_state_internal.h"
@@ -437,12 +436,6 @@ void handle_system_settings_action(
         settings_confirmation_clear(SettingsConfirmation::kFactoryReset);
         info_page_request(xTaskGetTickCount() + pdMS_TO_TICKS(kSettingsTimeoutMs));
         ESP_LOGI(TAG, "%s", SYSTEM_INFO_REQUESTED_LOG);
-    } else if (selected == kSystemSettingsOtaItem) {
-        if (offline_mode_enabled_load()) {
-            set_settings_feedback(kSettingsOfflineEnabledFeedback, kSettingsFeedbackDefaultMs);
-            return;
-        }
-        ota_handle_info_key();
     }
 }
 } // namespace

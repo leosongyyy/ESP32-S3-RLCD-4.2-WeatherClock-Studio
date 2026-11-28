@@ -8,7 +8,6 @@
 #include "network_diagnostics_catalog.h"
 #include "network_diagnostics_state.h"
 #include "ntp_services.h"
-#include "ota_services.h"
 #include "ui_fonts.h"
 #include "ui_page_state.h"
 #include "ui_text_format.h"
@@ -268,7 +267,6 @@ bool update_boot_info_page()
     changed |= set_info_string_label(kInfoSourceLabelIndex,
                                      kInfoSourceFormat,
                                      kProjectSourceUrl);
-    ota_reset_status_if_idle();
     return changed;
 }
 

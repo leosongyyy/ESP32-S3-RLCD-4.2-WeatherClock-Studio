@@ -8,14 +8,11 @@
 #include "app_tick_time.h"
 #include "chime_runtime_state.h"
 
-#include "ota_runtime_state.h"
-#include "ota_services.h"
 #include "ui_page_state.h"
 #include "ui_settings_content.h"
 #include "ui_settings_feedback.h"
 #include "ui_settings_layout.h"
 #include "ui_settings_navigation.h"
-#include "ui_settings_ota_panel.h"
 #include "ui_widgets.h"
 #include "ui_work_page_catalog.h"
 #include "work_page_ids.h"
@@ -41,9 +38,6 @@ struct SettingsRenderCache {
     lv_obj_t *settings_root;
     int primary;
     int selected;
-    int ota_state;
-    int ota_progress;
-    int ota_speed;
     int page_order_selection;
     bool focus_secondary;
     bool page_order_mode;
@@ -155,9 +149,6 @@ void reset_settings_render_cache()
     cache.magic = kSettingsRenderCacheMagic;
     cache.primary = -1;
     cache.selected = -1;
-    cache.ota_state = -1;
-    cache.ota_progress = -2;
-    cache.ota_speed = -2;
     cache.page_order_selection = -1;
 }
 
@@ -316,10 +307,6 @@ void build_settings_page()
             ESP_LOGW(TAG, SETTINGS_SWITCH_DOT_CREATE_FAILED_FORMAT, i);
         }
     }
-    build_settings_ota_panel(screen,
-                             settings_layout::kSettingsSecondaryX,
-                             settings_layout::kSettingsSecondaryW);
-
     s_settings_feedback_label = make_centered_label(screen,
                                                     24,
                                                     246,
@@ -340,8 +327,7 @@ void build_settings_page()
 namespace {
 bool settings_render_selection_changed(int primary,
                                        int selected,
-                                       const SettingsNavigationSnapshot &navigation,
-                                       const OtaRuntimeSnapshot &ota)
+                                       const SettingsNavigationSnapshot &navigation)
 {
     SettingsRenderCache &cache = settings_render_cache();
     lv_obj_t *settings_root = auxiliary_page_root(AuxiliaryPage::kSettings);
@@ -351,10 +337,7 @@ bool settings_render_selection_changed(int primary,
                              navigation.focus_secondary != cache.focus_secondary ||
                              navigation.page_toggle_mode != cache.page_toggle_mode ||
                              navigation.page_order_mode != cache.page_order_mode ||
-                             navigation.page_order_selection != cache.page_order_selection ||
-                             ota.state != cache.ota_state ||
-                             ota.progress != cache.ota_progress ||
-                             ota.speed_kbps != cache.ota_speed;
+                             navigation.page_order_selection != cache.page_order_selection;
     if (selection_changed) {
         cache.settings_root = settings_root;
         cache.selected = selected;
@@ -363,9 +346,6 @@ bool settings_render_selection_changed(int primary,
         cache.page_toggle_mode = navigation.page_toggle_mode;
         cache.page_order_mode = navigation.page_order_mode;
         cache.page_order_selection = navigation.page_order_selection;
-        cache.ota_state = ota.state;
-        cache.ota_progress = ota.progress;
-        cache.ota_speed = ota.speed_kbps;
     }
     return selection_changed;
 }
@@ -596,9 +576,6 @@ bool update_settings_feedback_label()
 
 bool update_settings_page()
 {
-    ota_reset_status_if_idle();
-    OtaRuntimeSnapshot ota = {};
-    ota_runtime_snapshot_load(&ota);
     SettingsRenderWorkspace &workspace = s_settings_render_workspace;
     memset(&workspace, 0, sizeof(workspace));
     SettingsNavigationSnapshot navigation = settings_navigation_snapshot();
@@ -618,7 +595,7 @@ bool update_settings_page()
             primary, secondary_state, workspace.secondary_items);
     }
     bool selection_changed =
-        settings_render_selection_changed(primary, selected, navigation, ota);
+        settings_render_selection_changed(primary, selected, navigation);
     bool changed = selection_changed;
     changed |= update_settings_primary_items(primary, selection_changed);
     changed |= update_settings_secondary_items(primary,
@@ -627,8 +604,6 @@ bool update_settings_page()
                                                navigation,
                                                secondary_state,
                                                workspace.secondary_items);
-    bool ota_panel_visible = primary == kSettingsPrimarySystem && selected == kSystemSettingsOtaItem;
-    changed |= update_settings_ota_panel(ota_panel_visible, ota);
     changed |= update_settings_feedback_label();
     return changed;
 }
